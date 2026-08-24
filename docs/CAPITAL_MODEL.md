@@ -1,53 +1,11 @@
-# Capital Model
+# Opportunity-accessible capital
 
-## Principle
+ABn does not require a fixed starting capital amount. `CAPITAL_MODEL=ACCESSIBLE_OPPORTUNITY` means the scanner asks: **what liquidity can be validly committed for this specific opportunity, for this specific duration, under independently verified repayment terms?**
 
-The platform does **not** require a fixed starting-capital amount. `Capital` means any legitimately accessible liquidity that can fund the complete opportunity lifecycle and return according to the modeled execution plan.
+Eligible sources: funded inventory; pre-funded cross-network inventory; explicitly configured temporary liquidity; verified atomic flash liquidity; and composite capacity.
 
-Examples include:
+A displayed balance is not automatically capital. A provider must confirm availability for the requested size. The engine models principal, provider fees, gas, slippage, settlement/bridge cost, collateral, latency and safety reserve.
 
-- pre-funded CEX balances
-- pre-funded DEX wallet inventory
-- flash liquidity where the transaction atomically repays it
-- approved borrowing/credit facilities
-- other explicitly configured liquidity sources
+An opportunity is executable only when accessible capital covers the required transaction and all modeled costs while expected net profit remains above the safety reserve. If liquidity cannot be independently verified, the opportunity is rejected rather than assumed funded.
 
-Accessibility alone is insufficient. The capital source must be available for the execution window, compatible with the venue/network, and its repayment or return must be modeled before an opportunity becomes executable.
-
-## Capital gate
-
-For each candidate:
-
-`required notional + all execution costs + safety reserve < modeled return/proceeds`
-
-and:
-
-`expected net profit >= MIN_PROFIT`
-
-The engine also checks liquidity, balance/credit availability, venue health, quote freshness, gas, slippage, limits and reconciliation requirements.
-
-## No fixed $3 requirement
-
-A small amount such as approximately $3 equivalent may be used for a controlled live test, but it is **not** a protocol definition of capital. The scanner should discover opportunities based on accessible liquidity and trade-size constraints.
-
-## Capital sources
-
-Each source has:
-
-- source type
-- asset
-- network
-- available notional
-- required notional
-- access conditions
-- expected duration
-- repayment/return condition
-- fees
-- safety reserve
-- expected net profit
-
-The worker must never infer access merely from a displayed balance or price. It must verify the source before execution.
-
-## Risk statement
-
-Accessible capital does not make an arbitrage trade risk-free. Execution, liquidity, counterparty, smart-contract, bridge, latency and reconciliation risks remain. The platform therefore retains the hard policy: **DO NOT TRADE UNLESS MODELED NET PROFIT EXCEEDS ALL COSTS AND SAFETY RESERVE.**
+This model does not make arbitrage risk-free and does not guarantee repayment or profit.
