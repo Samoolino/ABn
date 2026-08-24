@@ -1,32 +1,97 @@
-# Funded-capital model
+# Capital Model — Funded Wallet + Opportunity-Driven Sizing
 
-ABn can trade only against capital that is independently verified as available for the specific opportunity. The preferred source for the controlled live test is `FUNDED_INVENTORY` backed by a protected signer reference.
+## Production rule
 
-## $3-equivalent controlled profile
+Capital is supplied by a pre-funded wallet/account whose signing authority is referenced by `TRADING_SIGNER_REF` and resolved through the configured secure signer. The application repository must never contain the raw private key.
 
-- `TARGET_EQUITY_USD=3`
-- `CAPITAL_MAX_WORKING_USD=2.55`
-- `CAPITAL_MIN_RESERVE_USD=0.45`
-- `MAX_TRADE_SIZE_USD=2.55`
-- `MAX_OPEN_TRADES=1`
+The worker does **not** start trading because a configured amount such as `$3`, `$100`, or `$1,000` exists.
 
-The engine never assumes the configured amount exists. It queries the signer/venue balance and uses the lesser of verified balance and configured working-capital limits. If the signer is not configured or funded capital cannot be verified, live execution is blocked.
+Instead:
 
-## Execution gate
+```text
+FUNDED CAPITAL DISCOVERY
+        ↓
+VERIFY AVAILABLE BALANCE
+        ↓
+DISCOVER EXECUTABLE OPPORTUNITY
+        ↓
+CALCULATE REQUIRED NOTIONAL
+        ↓
+CHECK CAPITAL + RESERVE + RISK + LIQUIDITY
+        ↓
+SIZE TRADE DYNAMICALLY
+        ↓
+PROFIT ASSERTION
+        ↓
+EXECUTE ONLY IF NET PROFIT PASSES ALL GATES
+```
 
-A candidate must satisfy all of the following:
+## Dynamic opportunity sizing
 
-1. verified funded balance covers trade notional plus reserve;
-2. quote is fresh and liquidity supports the requested size;
-3. modeled gross proceeds cover purchase cost, trading fees, gas, slippage, bridge/settlement costs and safety reserve;
-4. expected net profit exceeds the configured minimum;
-5. risk limits and runtime authorization pass;
-6. both legs have a reconciliation plan.
+For each opportunity, the execution planner determines the maximum executable size from the intersection of:
 
-A profitable displayed spread is not sufficient.
+- verified available funded capital
+- venue balances/inventory
+- order-book or DEX liquidity
+- minimum/maximum venue order sizes
+- token precision
+- gas affordability
+- expected slippage
+- trading fees
+- settlement/bridge costs
+- configured safety reserve
+- maximum allocation percentage
+- position and daily-loss limits
+- maximum open trades
 
-## Target attainment
+Therefore a profitable opportunity may be executed at `$0.50`, `$3`, `$25`, `$500`, or another amount **if and only if** the actual venue/network constraints and risk controls support it.
 
-When verified equity reaches `TARGET_EQUITY_USD`, new trades stop. Open positions are reconciled and a `SWEEP_REQUEST` is created for operator approval. The sweep signer independently verifies destination, asset, amount and network.
+There is no hard-coded `$3` execution requirement.
 
-This model does not make arbitrage risk-free and does not guarantee profit.
+## $3 reference
+
+A small amount may be used as a controlled live-test budget, but it is not the production opportunity trigger and must never be interpreted as guaranteed available capital.
+
+## Profit gate
+
+The required condition is:
+
+```text
+modeled gross proceeds
+- purchase cost
+- buy fee
+- sell fee
+- gas
+- slippage
+- bridge cost
+- settlement cost
+- safety reserve
+> 0
+```
+
+and all other risk, balance, freshness, liquidity and execution gates must pass.
+
+The system must use the **maximum executable size that remains profitable and within risk limits**, not simply the largest available balance and not a fixed configured trade amount.
+
+## Private key handling
+
+The funded wallet private key is a signing secret. It must be injected through a secure signer boundary such as Vault, HSM, KMS, hardware wallet or protected keystore. `TRADING_SIGNER_REF` identifies the signer; it is not the private key itself.
+
+Never put a raw private key in:
+
+- Git
+- `.env.example`
+- PostgreSQL rows
+- Redis
+- browser code
+- dashboard payloads
+- Telegram messages
+- application logs
+
+## Safety
+
+Funded capital does not imply that a trade is profitable. The system must continue to enforce:
+
+> DO NOT TRADE UNLESS MODELED NET PROFIT EXCEEDS ALL COSTS AND SAFETY RESERVE.
+
+If no opportunity meets the complete gate, the correct action is `SKIP`, regardless of how much capital is available.
