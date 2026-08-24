@@ -1,21 +1,15 @@
 # Database Architecture
 
-## PostgreSQL is optional as a product choice, but a durable relational database is strongly recommended
+ABn uses standalone PostgreSQL plus Redis. Supabase is not an integration or runtime dependency.
 
-ABn can completely eliminate Supabase. Supabase is a managed platform, not a database requirement.
+## Responsibilities
 
-Recommended standalone production stack:
+- PostgreSQL: authoritative durable state for users, venues, markets, quotes, opportunities, orders, fills, capital allocations, realized PnL, reconciliation, risk events, health and audit logs.
+- Redis: transient quote/cache state, distributed locks, deduplication, queues, rate-limit coordination and worker heartbeats.
+- Auth.js: application authentication/session layer for email/password, Google and Apple.
+- Vault/HSM/KMS: secret and signing boundary.
 
-- PostgreSQL: authoritative persistent state, accounting, trades, reconciliations, audit logs, users/configuration.
-- Redis: ephemeral acceleration layer for quote caches, locks, deduplication, queues, rate limits and worker coordination.
-- Application authentication: an independent OIDC/OAuth provider or self-hosted auth service when Supabase Auth is removed.
-- Secret manager: Vault/HSM/KMS for credentials and signing material.
-
-Redis must never be the source of truth for balances, orders, fills, PnL or reconciliation.
-
-## Can PostgreSQL work alongside Redis?
-
-Yes. This is the preferred architecture for a high-throughput worker:
+Redis is never the source of truth for balances, orders, fills, PnL or reconciliation.
 
 ```text
 CEX/DEX feeds -> Redis -> scanner/opportunity engine
@@ -27,23 +21,14 @@ CEX/DEX feeds -> Redis -> scanner/opportunity engine
               reconciliation/audit
 ```
 
-PostgreSQL stores durable facts. Redis stores transient state and coordination data.
+## Migrations
 
-## Can PostgreSQL completely replace Supabase?
+Run `packages/database/migrations/*.sql` against `DATABASE_URL`. The migration is plain PostgreSQL and does not reference `auth.users`, Supabase RLS, or Supabase APIs.
 
-Yes. Supabase can be removed entirely if ABn supplies equivalents for:
+## Authentication
 
-- PostgreSQL connectivity and migrations
-- authentication/session management
-- Google OAuth
-- Apple OAuth
-- email/password authentication
-- authorization/RLS policies
-- secure server APIs
-- operational backups/monitoring
-
-For the initial release, retaining Supabase Auth while using PostgreSQL as the durable model is simpler. A future `AUTH_PROVIDER=standalone` implementation can remove Supabase without changing the trading core.
+Auth.js stores application users in PostgreSQL. Passwords are bcrypt hashes; OAuth identities are normalized into the users table. Provider credentials remain in the runtime secret manager.
 
 ## Capital
 
-Capital is opportunity-accessible liquidity, not a mandatory fixed starting amount. Each opportunity must independently prove accessible liquidity, execution cost, repayment/settlement and positive net profit.
+The capital engine can use funded signer-backed inventory when a configured signer reference is available. The application never stores a raw private key. The default production test budget is capped at $2.55 working capital plus a $0.45 reserve, with a $3 target-equity threshold. Actual usable capital is the lesser of configured limits and verified funded balance.
