@@ -1,0 +1,1 @@
+export default function Home(){return <main style={{padding:32}}><h1>Free Cloud Arbitrage</h1><p>Production multi-venue arbitrage control plane.</p><p>Runtime default: <b>STOPPED / DRY_RUN</b></p><a href="/auth">Sign in</a></main>}
