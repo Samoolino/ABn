@@ -1,0 +1,19 @@
+[Unit]
+Description=ABn Arbitrage Worker
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/abn
+EnvironmentFile=/opt/abn/.env
+ExecStart=/usr/bin/node /opt/abn/apps/worker/dist/index.js
+Restart=always
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/opt/abn
+
+[Install]
+WantedBy=multi-user.target
