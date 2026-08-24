@@ -1,0 +1,6 @@
+{
+  "buildCommand": "pnpm install --frozen-lockfile=false && pnpm --filter @abn/web build",
+  "installCommand": "corepack enable && corepack prepare pnpm@9.15.5 --activate && pnpm install --no-frozen-lockfile",
+  "framework": "nextjs",
+  "outputDirectory": "apps/web/.next"
+}
