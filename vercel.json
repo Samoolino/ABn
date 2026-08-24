@@ -1,6 +1,6 @@
 {
   "buildCommand": "npm --prefix apps/web run build",
-  "installCommand": "npm --prefix apps/web install --no-audit --no-fund",
+  "installCommand": "npm install --no-audit --no-fund && npm --prefix apps/web install --no-audit --no-fund",
   "framework": "nextjs",
   "outputDirectory": "apps/web/.next"
 }
