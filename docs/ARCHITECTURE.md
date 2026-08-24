@@ -2,11 +2,11 @@
 
 ## Runtime boundaries
 
-The Next.js app is a control-plane UI. The worker is the execution-plane process and must run independently of Vercel. Supabase stores application metadata, authenticated users, RLS-protected operational records and audit events. Provider secrets and signing material belong in Vault/HSM/managed secret infrastructure.
+The Next.js app is a control-plane UI. The worker is the execution-plane process and must run independently of Vercel. PostgreSQL stores application metadata, authenticated users, operational records, accounting and audit events. Redis provides transient market/cache state, locks, queues and worker coordination. Provider secrets and signing material belong in Vault/HSM/KMS/protected-keystore infrastructure.
 
 ## Core flow
 
-`market adapters → normalized quotes → opportunity engine → profit assertion → risk gate → capital gate → execution plan → venue legs → reconciliation → capital release → audit`
+`market adapters → normalized quotes → opportunity engine → profit assertion → risk gate → funded-capital gate → execution plan → venue legs → reconciliation → capital release → audit`
 
 Cross-network opportunities require pre-funded destination inventory unless an explicit bridge model proves the opportunity remains executable after bridge cost and latency.
 
@@ -20,7 +20,11 @@ CEX and DEX adapters expose normalized interfaces. Venue-specific symbols, preci
 
 ## Capital model
 
-A configured starting amount may be as small as the equivalent of $3. The engine still enforces reserve and allocation limits; it does not imply that $3 is sufficient to overcome real exchange minimums, fees, gas or withdrawal constraints. Such an opportunity must therefore be rejected when it cannot satisfy all gates.
+A configured starting budget may be as small as the equivalent of $3. The controlled profile keeps $0.45 reserved and caps working capital at $2.55. The engine still verifies actual funded balance before every execution; it does not imply that $3 is sufficient to overcome real exchange minimums, fees, gas or settlement constraints. Such an opportunity must therefore be rejected when it cannot satisfy every gate.
+
+## Authentication
+
+Auth.js provides email/password, Google and Apple authentication. PostgreSQL is the user store. There is no Supabase dependency in the target architecture.
 
 ## Persistence
 
