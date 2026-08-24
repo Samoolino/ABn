@@ -1,0 +1,16 @@
+node_modules/
+.pnpm-store/
+.next/
+dist/
+build/
+coverage/
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.seed
+secrets/
+credentials/
+wallets/
+.DS_Store
