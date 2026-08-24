@@ -1,0 +1,4 @@
+import { NextResponse } from 'next/server';
+import { createServerClient } from '@supabase/ssr';
+import { cookies } from 'next/headers';
+export async function GET(request:Request){const provider=new URL(request.url).searchParams.get('provider');if(provider!=='google'&&provider!=='apple')return NextResponse.redirect(new URL('/auth?error=unsupported_provider',request.url));const store=await cookies();const supabase=createServerClient(process.env.NEXT_PUBLIC_SUPABASE_URL!,process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,{cookies:{getAll:()=>store.getAll(),setAll(items){items.forEach(({name,value,options})=>store.set(name,value,options))}}});const {data,error}=await supabase.auth.signInWithOAuth({provider,options:{redirectTo:`${process.env.NEXT_PUBLIC_SITE_URL}/auth/callback`}});if(error||!data.url)return NextResponse.redirect(new URL('/auth?error=oauth_not_configured',request.url));return NextResponse.redirect(data.url);}
