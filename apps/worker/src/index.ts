@@ -8,6 +8,7 @@ const interval = Number(process.env.HEARTBEAT_MS || 5000);
 const db = createDatabasePool();
 const redis = createRedisClient();
 const policy = fundedCapitalPolicy();
+const safetyReserve = Number(process.env.SAFETY_RESERVE_USD || '0');
 
 let mode = requestedMode;
 let controlStatus = 'STOPPED';
@@ -41,10 +42,11 @@ async function refreshControlAndOpportunity() {
        from opportunities
       where status in ('EXECUTABLE', 'EXECUTABLE_NOW')
         and expires_at > now()
-        and net_profit > safety_reserve
+        and net_profit > $1
       order by net_profit / greatest(capital_required, 0.00000001) desc, net_profit desc
       limit 1`,
-  ).catch(() => ({ rows: [] as Array<{ id:string; symbol:string; net_profit:string; capital_required:string; expires_at:string }> }));
+    [safetyReserve],
+  );
 
   const opportunity = candidate.rows[0];
   if (!opportunity) {
@@ -73,6 +75,7 @@ console.log(JSON.stringify({
   coordination: redis ? 'REDIS_CONFIGURED' : 'NOT_CONFIGURED',
   signer: signerReady() ? 'PROTECTED_REF_CONFIGURED' : 'NOT_CONFIGURED',
   capitalPolicy: policy,
+  safetyReserveUsd: safetyReserve,
 }));
 
 async function heartbeat() {
