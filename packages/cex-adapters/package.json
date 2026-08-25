@@ -1,1 +1,1 @@
-{"name":"@abn/cex-adapters","private":true,"version":"0.1.0","type":"module","main":"index.ts","dependencies":{"@abn/venue-adapters":"workspace:*","ccxt":"^4.5.0"}}
+{"name":"@abn/cex-adapters","private":true,"version":"0.1.0","type":"module","main":"index.ts","dependencies":{"@abn/execution":"workspace:*","@abn/venue-adapters":"workspace:*","ccxt":"^4.5.0"}}
