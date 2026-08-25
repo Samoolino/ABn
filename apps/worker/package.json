@@ -5,6 +5,7 @@
   "scripts": {"dev":"tsx src/index.ts","build":"tsc","typecheck":"tsc --noEmit"},
   "dependencies": {
     "@abn/capital-engine":"workspace:*",
+    "@abn/cex-adapters":"workspace:*",
     "@abn/database":"workspace:*",
     "@abn/execution":"workspace:*",
     "@abn/opportunity-engine":"workspace:*",
