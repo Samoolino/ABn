@@ -4,7 +4,7 @@ import { createCEXAdapter } from '@abn/cex-adapters';
 
 export type LegResult = {status:'FULL_FILL'|'PARTIAL_FILL'|'REJECTED'|'CANCELLED'|'TIMEOUT'|'UNKNOWN'; filled:number; average?:number; externalId?:string};
 export interface ExecutionPlan { correlationId:string; opportunityId:string; buy:Record<string,unknown>; sell:Record<string,unknown>; capital:CapitalAccess; }
-export interface ExecutionConnector { executeBuy(plan:ExecutionPlan):Promise<LegResult>; executeSell(plan:ExecutionPlan):Promise<LegResult>; hedgeOrExit(plan:ExecutionPlan,leg:LegResult):Promise<LegResult>; }
+export interface ExecutionConnector { executeBuy(plan:ExecutionPlan):Promise<LegResult>; executeSell(plan:ExecutionPlan):Promise<LegResult>; hedgeOrExit(plan:ExecutionPlan,leg:LegResult,sourceSide?:'buy'|'sell'):Promise<LegResult>; }
 
 function requireString(value: unknown, name: string): string {
   if (typeof value !== 'string' || !value) throw new Error(`${name}_NOT_CONFIGURED`);
@@ -35,18 +35,19 @@ export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdap
     return final.filled > 0 ? {status:'PARTIAL_FILL', filled:final.filled, average:final.average, externalId:order.id} : {status:'TIMEOUT', filled:0, externalId:order.id};
   };
 
+  const hedge = async (plan: ExecutionPlan, leg: LegResult, sourceSide: 'buy'|'sell'): Promise<LegResult> => {
+    const amount = Number(leg.filled);
+    if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
+    if (sourceSide === 'buy') {
+      return execute(sellAdapter, 'sell', {...plan, sell:{...plan.sell, amount, quantity:amount}});
+    }
+    return execute(buyAdapter, 'buy', {...plan, buy:{...plan.buy, amount, quantity:amount}});
+  };
+
   return {
     executeBuy: plan => execute(buyAdapter, 'buy', plan),
     executeSell: plan => execute(sellAdapter, 'sell', plan),
-    async hedgeOrExit(plan, leg) {
-      const symbol = requireString((plan.buy.symbol ?? plan.sell.symbol), 'HEDGE_SYMBOL');
-      const amount = leg.filled;
-      if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
-      const adapter = buyAdapter;
-      const order = await adapter.createOrder({symbol, side:'sell', type:'market', amount});
-      const status = await adapter.orderStatus(order.id, symbol);
-      return {status:String(status.status).toUpperCase() === 'CLOSED' ? 'FULL_FILL' : 'PARTIAL_FILL', filled:status.filled, average:status.average, externalId:order.id};
-    },
+    hedgeOrExit: (plan, leg, sourceSide = 'buy') => hedge(plan, leg, sourceSide),
   };
 }
 
@@ -69,7 +70,7 @@ export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, c
   const buy = await connector.executeBuy(plan);
   if (buy.status !== 'FULL_FILL') {
     const residualPlan = withResidual(plan, buy.filled);
-    return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(residualPlan,buy)};
+    return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(residualPlan,buy,'buy')};
   }
 
   const started = Date.now();
@@ -79,7 +80,7 @@ export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, c
   const residual = Math.max(0, buy.filled - sell.filled);
   if (residual > 0 && (Date.now()-started > maxUnhedgedMs || sell.status !== 'FULL_FILL')) {
     const residualPlan = withResidual(plan, residual);
-    const hedge = await connector.hedgeOrExit(residualPlan,{...buy,filled:residual});
+    const hedge = await connector.hedgeOrExit(residualPlan,{...sell,filled:residual},'sell');
     return {status:'HEDGE_OR_EXIT',buy,sell:hedge};
   }
 
