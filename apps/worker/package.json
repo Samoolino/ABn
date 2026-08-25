@@ -1,1 +1,17 @@
-{"name":"@abn/worker","private":true,"type":"module","scripts":{"dev":"tsx src/index.ts","build":"tsc","typecheck":"tsc --noEmit"},"dependencies":{"@abn/capital-engine":"workspace:*","@abn/database":"workspace:*","@abn/opportunity-engine":"workspace:*","@abn/redis":"workspace:*","@abn/risk-engine":"workspace:*","@abn/signer":"workspace:*","@abn/types":"workspace:*"},"devDependencies":{"@types/node":"^22.0.0","tsx":"^4.19.0","typescript":"^5.7.0"}}
+{
+  "name": "@abn/worker",
+  "private": true,
+  "type": "module",
+  "scripts": {"dev":"tsx src/index.ts","build":"tsc","typecheck":"tsc --noEmit"},
+  "dependencies": {
+    "@abn/capital-engine":"workspace:*",
+    "@abn/database":"workspace:*",
+    "@abn/execution":"workspace:*",
+    "@abn/opportunity-engine":"workspace:*",
+    "@abn/redis":"workspace:*",
+    "@abn/risk-engine":"workspace:*",
+    "@abn/signer":"workspace:*",
+    "@abn/types":"workspace:*"
+  },
+  "devDependencies": {"@types/node":"^22.0.0","tsx":"^4.19.0","typescript":"^5.7.0"}
+}
