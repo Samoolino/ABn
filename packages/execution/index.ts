@@ -1,9 +1,64 @@
-import type { Opportunity } from '@abn/types';
-import type { CapitalAccess } from '@abn/types';
+import type { Opportunity, CapitalAccess } from '@abn/types';
+import type { CEXAdapter } from '@abn/venue-adapters';
+import { createCEXAdapter } from '@abn/cex-adapters';
 
 export type LegResult = {status:'FULL_FILL'|'PARTIAL_FILL'|'REJECTED'|'CANCELLED'|'TIMEOUT'|'UNKNOWN'; filled:number; average?:number; externalId?:string};
 export interface ExecutionPlan { correlationId:string; opportunityId:string; buy:Record<string,unknown>; sell:Record<string,unknown>; capital:CapitalAccess; }
 export interface ExecutionConnector { executeBuy(plan:ExecutionPlan):Promise<LegResult>; executeSell(plan:ExecutionPlan):Promise<LegResult>; hedgeOrExit(plan:ExecutionPlan,leg:LegResult):Promise<LegResult>; }
+
+function requireString(value: unknown, name: string): string {
+  if (typeof value !== 'string' || !value) throw new Error(`${name}_NOT_CONFIGURED`);
+  return value;
+}
+
+export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapter: CEXAdapter): ExecutionConnector {
+  const execute = async (adapter: CEXAdapter, side: 'buy'|'sell', plan: ExecutionPlan): Promise<LegResult> => {
+    const leg = side === 'buy' ? plan.buy : plan.sell;
+    const symbol = requireString(leg.symbol, `${side.toUpperCase()}_SYMBOL`);
+    const amount = Number(leg.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error(`${side.toUpperCase()}_AMOUNT_INVALID`);
+    const type = (leg.type === 'limit' ? 'limit' : 'market') as 'market'|'limit';
+    const price = leg.price === undefined ? undefined : Number(leg.price);
+    const order = await adapter.createOrder({symbol, side, type, amount, price});
+    const started = Date.now();
+    const timeoutMs = Number(process.env.EXECUTION_ORDER_TIMEOUT_MS || '5000');
+    while (Date.now() - started < timeoutMs) {
+      const status = await adapter.orderStatus(order.id, symbol);
+      const normalized = String(status.status).toUpperCase();
+      if (normalized === 'CLOSED' || normalized === 'FILLED') return {status:'FULL_FILL', filled:status.filled, average:status.average, externalId:order.id};
+      if (normalized === 'CANCELED' || normalized === 'CANCELLED') return {status:'CANCELLED', filled:status.filled, average:status.average, externalId:order.id};
+      if (normalized === 'REJECTED') return {status:'REJECTED', filled:status.filled, average:status.average, externalId:order.id};
+      await new Promise(resolve => setTimeout(resolve, 250));
+    }
+    try { await adapter.cancelOrder(order.id, symbol); } catch {}
+    const final = await adapter.orderStatus(order.id, symbol);
+    return final.filled > 0 ? {status:'PARTIAL_FILL', filled:final.filled, average:final.average, externalId:order.id} : {status:'TIMEOUT', filled:0, externalId:order.id};
+  };
+
+  return {
+    executeBuy: plan => execute(buyAdapter, 'buy', plan),
+    executeSell: plan => execute(sellAdapter, 'sell', plan),
+    async hedgeOrExit(plan, leg) {
+      const symbol = requireString((plan.buy.symbol ?? plan.sell.symbol), 'HEDGE_SYMBOL');
+      const amount = leg.filled;
+      if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
+      const adapter = buyAdapter;
+      const order = await adapter.createOrder({symbol, side:'sell', type:'market', amount});
+      const status = await adapter.orderStatus(order.id, symbol);
+      return {status:String(status.status).toUpperCase() === 'CLOSED' ? 'FULL_FILL' : 'PARTIAL_FILL', filled:status.filled, average:status.average, externalId:order.id};
+    },
+  };
+}
+
+export function createCEXAdapterFromEnv(venue: string): CEXAdapter {
+  const id = venue.toLowerCase() as Parameters<typeof createCEXAdapter>[0];
+  const prefix = id.toUpperCase();
+  const apiKey = process.env[`${prefix}_API_KEY`];
+  const secret = process.env[`${prefix}_API_SECRET`];
+  const password = process.env[`${prefix}_PASSWORD`];
+  if (!apiKey || !secret) throw new Error(`${prefix}_CREDENTIALS_NOT_CONFIGURED`);
+  return createCEXAdapter(id, {apiKey, secret, ...(password ? {password} : {})});
+}
 
 export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, connector:ExecutionConnector, maxUnhedgedMs:number):Promise<{status:string;buy:LegResult;sell:LegResult}> {
   const buy = await connector.executeBuy(plan);
