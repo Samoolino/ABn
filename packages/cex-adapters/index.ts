@@ -1,6 +1,5 @@
 import ccxt from 'ccxt';
-import type { CEXAdapter } from '@abn/venue-adapters';
-import type { CEXId } from '@abn/venue-adapters';
+import type { CEXAdapter, CEXId, NormalizedOrderBook } from '@abn/venue-adapters';
 
 const classes: Record<CEXId, string> = {
   mexc: 'mexc', gate: 'gate', binance: 'binance', kraken: 'kraken', okx: 'okx',
@@ -18,12 +17,12 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
     enableRateLimit: true,
   });
 
-  return {
+  const adapter: CEXAdapter = {
     id,
-    async connect() {
+    async connect(): Promise<void> {
       await ex.loadMarkets();
     },
-    async health() {
+    async health(): Promise<boolean> {
       try {
         await ex.fetchTime();
         return true;
@@ -31,41 +30,41 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
         return false;
       }
     },
-    async markets() {
+    async markets(): Promise<string[]> {
       await ex.loadMarkets();
       return Object.keys(ex.markets);
     },
-    async ticker(symbol) {
+    async ticker(symbol: string): Promise<{ bid: number; ask: number; timestamp: number }> {
       const t = await ex.fetchTicker(symbol);
       return { bid: Number(t.bid), ask: Number(t.ask), timestamp: Number(t.timestamp || Date.now()) };
     },
-    async orderBook(symbol, limit = 50) {
+    async orderBook(symbol: string, limit = 50): Promise<NormalizedOrderBook> {
       const b = await ex.fetchOrderBook(symbol, limit);
       return {
         symbol,
-        bids: b.bids.map((x: any) => ({price: Number(x[0]), amount: Number(x[1])})),
-        asks: b.asks.map((x: any) => ({price: Number(x[0]), amount: Number(x[1])})),
+        bids: b.bids.map((x: [number, number]) => ({ price: Number(x[0]), amount: Number(x[1]) })),
+        asks: b.asks.map((x: [number, number]) => ({ price: Number(x[0]), amount: Number(x[1]) })),
         timestamp: Number(b.timestamp || Date.now()),
       };
     },
-    async balances() {
+    async balances(): Promise<Record<string, number>> {
       const b = await ex.fetchBalance();
       const out: Record<string, number> = {};
       for (const [k, v] of Object.entries(b.total || {})) out[k] = Number(v);
       return out;
     },
-    async fees(symbol) {
+    async fees(symbol: string): Promise<{ maker: number; taker: number }> {
       const m = ex.markets[symbol];
       return { maker: Number(m?.maker ?? 0), taker: Number(m?.taker ?? 0) };
     },
-    async createOrder(input) {
+    async createOrder(input: { symbol: string; side: 'buy' | 'sell'; type: 'market' | 'limit'; amount: number; price?: number }): Promise<{ id: string; status: string }> {
       const o = await ex.createOrder(input.symbol, input.type, input.side, input.amount, input.price);
-      return { id: o.id, status: String(o.status || 'open') };
+      return { id: String(o.id), status: String(o.status || 'open') };
     },
-    async cancelOrder(orderId, symbol) {
+    async cancelOrder(orderId: string, symbol: string): Promise<void> {
       await ex.cancelOrder(orderId, symbol);
     },
-    async orderStatus(orderId, symbol) {
+    async orderStatus(orderId: string, symbol: string): Promise<{ status: string; filled: number; average?: number; fee?: number }> {
       const o = await ex.fetchOrder(orderId, symbol);
       return {
         status: String(o.status || 'unknown'),
@@ -74,8 +73,10 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
         fee: o.fee?.cost == null ? undefined : Number(o.fee.cost),
       };
     },
-    async reconcile() {
+    async reconcile(): Promise<void> {
       return;
     },
   };
+
+  return adapter;
 }
