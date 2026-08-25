@@ -60,12 +60,28 @@ export function createCEXAdapterFromEnv(venue: string): CEXAdapter {
   return createCEXAdapter(id, {apiKey, secret, ...(password ? {password} : {})});
 }
 
+function withResidual(plan: ExecutionPlan, residual: number): ExecutionPlan {
+  return { ...plan, buy: { ...plan.buy, amount: residual }, sell: { ...plan.sell, amount: residual } };
+}
+
 export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, connector:ExecutionConnector, maxUnhedgedMs:number):Promise<{status:string;buy:LegResult;sell:LegResult}> {
+  void opportunity;
   const buy = await connector.executeBuy(plan);
-  if (buy.status !== 'FULL_FILL') return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(plan,buy)};
+  if (buy.status !== 'FULL_FILL') {
+    const residualPlan = withResidual(plan, buy.filled);
+    return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(residualPlan,buy)};
+  }
+
   const started = Date.now();
   const sell = await connector.executeSell(plan);
   if (sell.status === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
-  if (Date.now()-started > maxUnhedgedMs || sell.status !== 'FULL_FILL') return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(plan,buy)};
+
+  const residual = Math.max(0, buy.filled - sell.filled);
+  if (residual > 0 && (Date.now()-started > maxUnhedgedMs || sell.status !== 'FULL_FILL')) {
+    const residualPlan = withResidual(plan, residual);
+    const hedge = await connector.hedgeOrExit(residualPlan,{...buy,filled:residual});
+    return {status:'HEDGE_OR_EXIT',buy,sell:hedge};
+  }
+
   return {status:'PARTIAL',buy,sell};
 }
