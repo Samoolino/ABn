@@ -38,9 +38,7 @@ export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdap
   const hedge = async (plan: ExecutionPlan, leg: LegResult, sourceSide: 'buy'|'sell'): Promise<LegResult> => {
     const amount = Number(leg.filled);
     if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
-    if (sourceSide === 'buy') {
-      return execute(sellAdapter, 'sell', {...plan, sell:{...plan.sell, amount}});
-    }
+    if (sourceSide === 'buy') return execute(sellAdapter, 'sell', {...plan, sell:{...plan.sell, amount}});
     return execute(buyAdapter, 'buy', {...plan, buy:{...plan.buy, amount}});
   };
 
@@ -75,7 +73,7 @@ export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, c
 
   const started = Date.now();
   const sell = await connector.executeSell(plan);
-  if (sell.status === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
+  if ((sell.status as string) === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
 
   const residual = Math.max(0, buy.filled - sell.filled);
   if (residual > 0 && Date.now()-started > maxUnhedgedMs) {
