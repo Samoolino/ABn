@@ -26,9 +26,9 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
     async health() {
       try {
         await ex.fetchTime();
-        return { ok: true };
-      } catch (error) {
-        return { ok: false, reason: String(error) };
+        return true;
+      } catch {
+        return false;
       }
     },
     async markets() {
@@ -42,8 +42,9 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
     async orderBook(symbol, limit = 50) {
       const b = await ex.fetchOrderBook(symbol, limit);
       return {
-        bids: b.bids.map((x: any) => [Number(x[0]), Number(x[1])] as [number, number]),
-        asks: b.asks.map((x: any) => [Number(x[0]), Number(x[1])] as [number, number]),
+        symbol,
+        bids: b.bids.map((x: any) => ({price: Number(x[0]), amount: Number(x[1])})),
+        asks: b.asks.map((x: any) => ({price: Number(x[0]), amount: Number(x[1])})),
         timestamp: Number(b.timestamp || Date.now()),
       };
     },
@@ -58,7 +59,7 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
       return { maker: Number(m?.maker ?? 0), taker: Number(m?.taker ?? 0) };
     },
     async createOrder(input) {
-      const o = await ex.createOrder(input.symbol, input.type, input.side, input.quantity, input.price);
+      const o = await ex.createOrder(input.symbol, input.type, input.side, input.amount, input.price);
       return { id: o.id, status: String(o.status || 'open') };
     },
     async cancelOrder(orderId, symbol) {
@@ -67,21 +68,14 @@ export function createCEXAdapter(id: CEXId, credentials: Record<string, string>)
     async orderStatus(orderId, symbol) {
       const o = await ex.fetchOrder(orderId, symbol);
       return {
-        id: o.id,
-        status: String(o.status || 'unknown'),
-        filled: Number(o.filled || 0),
-        average: o.average == null ? undefined : Number(o.average),
-      };
-    },
-    async reconcile(orderId, symbol) {
-      const o = await ex.fetchOrder(orderId, symbol);
-      return {
-        id: o.id,
         status: String(o.status || 'unknown'),
         filled: Number(o.filled || 0),
         average: o.average == null ? undefined : Number(o.average),
         fee: o.fee?.cost == null ? undefined : Number(o.fee.cost),
       };
+    },
+    async reconcile() {
+      return;
     },
   };
 }
