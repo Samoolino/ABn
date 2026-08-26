@@ -1,8 +1,7 @@
 import { createDatabasePool } from '@abn/database';
 import { createRedisClient } from '@abn/redis';
 import { fundedCapitalPolicy } from '@abn/capital-engine';
-import { signerRefConfigured } from '@abn/signer';
-import { loadProtectedSignerImplementation } from '@abn/signer/providers/runtime.js';
+import { signerRefConfigured, loadProtectedSignerImplementation } from '@abn/signer';
 import type { FundedSigner } from '@abn/signer';
 import { createCEXAdapterFromEnv, createCEXPairExecutionConnector, executePair } from '@abn/execution';
 import type { Opportunity } from '@abn/types';
