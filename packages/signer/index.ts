@@ -26,3 +26,6 @@ export function requireProtectedSigner(ref = process.env.TRADING_SIGNER_REF): st
   if (!signerRefConfigured(ref)) throw new Error('SIGNER_NOT_CONFIGURED');
   return ref!;
 }
+
+export { loadProtectedSignerImplementation } from './providers/runtime.js';
+export type { ProtectedSignerImplementation } from './providers/runtime.js';
