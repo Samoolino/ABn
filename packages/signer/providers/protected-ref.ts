@@ -24,7 +24,7 @@ export function createProtectedSignerResolver(
 ): ProtectedSignerResolver {
   return {
     async resolve(ref: string) {
-      if (!ref || !/^(vault|hsm|kms|keystore):\\/\\//.test(ref)) {
+      if (!ref || !/^(vault|hsm|kms|keystore):\/\//.test(ref)) {
         throw new Error('SIGNER_NOT_CONFIGURED');
       }
       return implementation(ref, kindFromRef(ref));
