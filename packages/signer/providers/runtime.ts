@@ -1,4 +1,5 @@
 import type { FundedSigner, SignerKind } from '../index.js';
+import { createHttpProtectedSigner } from './http-protected.js';
 
 export type ProtectedSignerImplementation = (
   ref: string,
@@ -8,17 +9,22 @@ export type ProtectedSignerImplementation = (
 /**
  * Loads a deployment-supplied protected signer provider.
  *
- * The provider module is deliberately outside this repository's secret material.
- * It must export `resolve(ref, kind)` and perform all key handling inside Vault,
- * HSM, KMS, or another protected keystore boundary.
+ * Preferred production mode is an externally hosted Vault/HSM/KMS/protected
+ * keystore signer service. The service receives the signer reference and
+ * performs all key handling outside this application.
  */
 export async function loadProtectedSignerImplementation(): Promise<ProtectedSignerImplementation> {
   const moduleRef = process.env.SIGNER_PROVIDER_MODULE?.trim();
-  if (!moduleRef) throw new Error('SIGNER_PROVIDER_NOT_CONFIGURED');
+  if (moduleRef) {
+    const loaded = await import(moduleRef);
+    const resolve = loaded.resolve ?? loaded.default?.resolve;
+    if (typeof resolve !== 'function') throw new Error('SIGNER_PROVIDER_INVALID');
+    return resolve as ProtectedSignerImplementation;
+  }
 
-  const loaded = await import(moduleRef);
-  const resolve = loaded.resolve ?? loaded.default?.resolve;
-  if (typeof resolve !== 'function') throw new Error('SIGNER_PROVIDER_INVALID');
+  if (process.env.SIGNER_PROVIDER_URL?.trim()) {
+    return async (ref: string) => createHttpProtectedSigner(ref);
+  }
 
-  return resolve as ProtectedSignerImplementation;
+  throw new Error('SIGNER_PROVIDER_NOT_CONFIGURED');
 }
