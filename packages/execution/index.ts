@@ -13,18 +13,50 @@ function requireString(value: unknown, name: string): string {
 }
 
 function normalizeHummingbotResult(value: unknown, fallbackId?: string): LegResult {
-  const row = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const root = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const nested = Array.isArray(root.data) ? ((root.data[0] ?? {}) as Record<string, unknown>) : ((root.data && typeof root.data === 'object' ? root.data : root) as Record<string, unknown>);
+  const row = nested && typeof nested === 'object' ? nested : root;
   const rawStatus = String(row.status ?? row.state ?? 'UNKNOWN').toUpperCase();
-  const status: LegResult['status'] =
-    ['CLOSED','FILLED','FULL_FILL','COMPLETED'].includes(rawStatus) ? 'FULL_FILL' :
-    ['OPEN','PENDING','PARTIALLY_FILLED','PARTIAL_FILL','PARTIAL'].includes(rawStatus) ? 'PARTIAL_FILL' :
-    ['CANCELED','CANCELLED'].includes(rawStatus) ? 'CANCELLED' :
-    rawStatus === 'REJECTED' || rawStatus === 'FAILED' ? 'REJECTED' :
-    rawStatus === 'TIMEOUT' ? 'TIMEOUT' : 'UNKNOWN';
-  const filled = Number(row.filled ?? row.executedQty ?? row.executed_quantity ?? 0);
+  const status: LegResult['status'] = ['CLOSED','FILLED','FULL_FILL','COMPLETED'].includes(rawStatus) ? 'FULL_FILL' : ['OPEN','PENDING','PARTIALLY_FILLED','PARTIAL_FILL','PARTIAL'].includes(rawStatus) ? 'PARTIAL_FILL' : ['CANCELED','CANCELLED'].includes(rawStatus) ? 'CANCELLED' : rawStatus === 'REJECTED' || rawStatus === 'FAILED' ? 'REJECTED' : rawStatus === 'TIMEOUT' ? 'TIMEOUT' : 'UNKNOWN';
+  const filled = Number(row.filled ?? row.executedQty ?? row.executed_quantity ?? row.amount_filled ?? 0);
   const average = row.average ?? row.avgPrice ?? row.average_price ?? row.price;
   const externalId = String(row.order_id ?? row.orderId ?? row.client_order_id ?? row.id ?? fallbackId ?? '');
   return {status, filled:Number.isFinite(filled) && filled >= 0 ? filled : 0, average:average == null ? undefined : Number(average), externalId:externalId || undefined};
+}
+
+function vwap(levels: unknown, quantity: number, side: 'buy'|'sell'): number | null {
+  if (!Array.isArray(levels) || !Number.isFinite(quantity) || quantity <= 0) return null;
+  let remaining = quantity;
+  let notional = 0;
+  let filled = 0;
+  for (const level of levels) {
+    if (!Array.isArray(level) && (!level || typeof level !== 'object')) continue;
+    const row = Array.isArray(level) ? {price:level[0], amount:level[1]} : level as Record<string, unknown>;
+    const price = Number(row.price);
+    const amount = Number(row.amount ?? row.quantity ?? row.size);
+    if (!Number.isFinite(price) || !Number.isFinite(amount) || price <= 0 || amount <= 0) continue;
+    const take = Math.min(remaining, amount);
+    notional += take * price;
+    filled += take;
+    remaining -= take;
+    if (remaining <= 0) break;
+  }
+  return filled >= quantity ? notional / filled : null;
+}
+
+function assertProfitableOpportunity(opportunity: Opportunity): void {
+  const now = Date.now();
+  const minProfitUsd = Number(process.env.MIN_PROFIT_PER_TRADE_USD || '0');
+  const maxQuoteAgeMs = Number(process.env.MAX_QUOTE_AGE_MS || '1000');
+  const expected = Number(opportunity.expectedNetProfit);
+  const pct = Number(opportunity.netProfitPct);
+  if (!Number.isFinite(expected) || expected <= Math.max(0, minProfitUsd)) throw new Error(`LIVE_PROFIT_GATE_FAILED:expectedNetProfit=${expected}:min=${minProfitUsd}`);
+  if (!Number.isFinite(pct) || pct <= 0) throw new Error(`LIVE_PROFIT_PCT_GATE_FAILED:${pct}`);
+  if (!Number.isFinite(opportunity.quoteTimestamp) || now - opportunity.quoteTimestamp > maxQuoteAgeMs) throw new Error(`LIVE_QUOTE_STALE:${now - opportunity.quoteTimestamp}`);
+  if (!Number.isFinite(opportunity.expiresAt) || opportunity.expiresAt <= now) throw new Error('LIVE_OPPORTUNITY_EXPIRED');
+  const costSum = Number(opportunity.tradingFees) + Number(opportunity.gasCost) + Number(opportunity.slippageCost) + Number(opportunity.bridgeCost) + Number(opportunity.settlementCost);
+  const gross = Number(opportunity.grossProfit);
+  if (!Number.isFinite(gross) || !Number.isFinite(costSum) || gross - costSum <= 0) throw new Error(`LIVE_COST_GATED: gross=${gross}:costs=${costSum}`);
 }
 
 function createHummingbotPairExecutionConnector(buyConnector: string, sellConnector: string): ExecutionConnector {
@@ -37,6 +69,17 @@ function createHummingbotPairExecutionConnector(buyConnector: string, sellConnec
   const accountName = process.env.HUMMINGBOT_ACCOUNT || 'master_account';
   const client = createHummingbotClient({baseUrl, username, password, apiKey:process.env.HUMMINGBOT_API_KEY, timeoutMs:Number(process.env.HUMMINGBOT_TIMEOUT_MS || '5000')});
 
+  const validateLiveSpread = async (symbol: string, quantity: number) => {
+    const [buyBook, sellBook] = await Promise.all([client.orderBook(symbol, buyConnector), client.orderBook(symbol, sellConnector)]);
+    const buyRoot = (buyBook && typeof buyBook === 'object' ? buyBook : {}) as Record<string, unknown>;
+    const sellRoot = (sellBook && typeof sellBook === 'object' ? sellBook : {}) as Record<string, unknown>;
+    const buyAsk = vwap(buyRoot.asks, quantity, 'buy');
+    const sellBid = vwap(sellRoot.bids, quantity, 'sell');
+    if (buyAsk == null || sellBid == null) throw new Error('HUMMINGBOT_LIQUIDITY_INSUFFICIENT');
+    if (!(sellBid > buyAsk)) throw new Error(`LIVE_SPREAD_GATED:buyVWAP=${buyAsk}:sellVWAP=${sellBid}`);
+    return {buyAsk, sellBid, grossSpreadUsd:(sellBid - buyAsk) * quantity};
+  };
+
   const execute = async (plan: ExecutionPlan, side: 'buy'|'sell'): Promise<LegResult> => {
     const leg = side === 'buy' ? plan.buy : plan.sell;
     const connectorName = side === 'buy' ? buyConnector : sellConnector;
@@ -44,18 +87,9 @@ function createHummingbotPairExecutionConnector(buyConnector: string, sellConnec
     const amount = Number(leg.amount ?? 0);
     if (!Number.isFinite(amount) || amount <= 0) throw new Error(`${side.toUpperCase()}_AMOUNT_INVALID`);
     if (!(await client.health())) throw new Error('HUMMINGBOT_UNHEALTHY');
-    await client.orderBook(symbol, connectorName);
+    await validateLiveSpread(symbol, amount);
     const clientOrderId = `${plan.correlationId}-${side}`;
-    const created = await client.execute({
-      account_name: accountName,
-      connector_name: connectorName,
-      trading_pair: symbol,
-      trade_type: side.toUpperCase(),
-      amount,
-      order_type: leg.type === 'limit' ? 'LIMIT' : 'MARKET',
-      ...(leg.price == null ? {} : {price:Number(leg.price)}),
-      client_order_id: clientOrderId,
-    });
+    const created = await client.execute({account_name:accountName,connector_name:connectorName,trading_pair:symbol,trade_type:side.toUpperCase(),amount,order_type:leg.type === 'limit' ? 'LIMIT' : 'MARKET',...(leg.price == null ? {} : {price:Number(leg.price)}),position_action:'OPEN',client_order_id:clientOrderId});
     const initial = normalizeHummingbotResult(created, clientOrderId);
     if (initial.status === 'FULL_FILL' || initial.status === 'REJECTED' || initial.status === 'CANCELLED') return initial;
     const started = Date.now();
@@ -63,12 +97,12 @@ function createHummingbotPairExecutionConnector(buyConnector: string, sellConnec
     let last = initial;
     while (Date.now() - started < timeoutMs) {
       await new Promise(resolve => setTimeout(resolve, 250));
-      last = normalizeHummingbotResult(await client.status({account_name:accountName, connector_name:connectorName, client_order_id:clientOrderId}), clientOrderId);
+      last = normalizeHummingbotResult(await client.status({account_name:accountName,connector_name:connectorName,client_order_id:clientOrderId}), clientOrderId);
       if (last.status === 'FULL_FILL' || last.status === 'REJECTED' || last.status === 'CANCELLED') return last;
     }
-    await client.cancel({account_name:accountName, connector_name:connectorName, client_order_id:clientOrderId}).catch(() => undefined);
-    const final = normalizeHummingbotResult(await client.status({account_name:accountName, connector_name:connectorName, client_order_id:clientOrderId}), clientOrderId);
-    return final.filled > 0 ? {...final, status:'PARTIAL_FILL'} : {...final, status:'TIMEOUT'};
+    await client.cancel({account_name:accountName,connector_name:connectorName,client_order_id:clientOrderId}).catch(() => undefined);
+    const final = normalizeHummingbotResult(await client.status({account_name:accountName,connector_name:connectorName,client_order_id:clientOrderId}), clientOrderId);
+    return final.filled > 0 ? {...final,status:'PARTIAL_FILL'} : {...final,status:'TIMEOUT'};
   };
 
   return {
@@ -77,7 +111,7 @@ function createHummingbotPairExecutionConnector(buyConnector: string, sellConnec
     hedgeOrExit: async (plan, leg, sourceSide = 'buy') => {
       const filled = Number(leg.filled);
       if (!Number.isFinite(filled) || filled <= 0) return {status:'UNKNOWN', filled:0};
-      const next = sourceSide === 'buy' ? {...plan, sell:{...plan.sell, amount:filled}} : {...plan, buy:{...plan.buy, amount:filled}};
+      const next = sourceSide === 'buy' ? {...plan,sell:{...plan.sell,amount:filled}} : {...plan,buy:{...plan.buy,amount:filled}};
       return execute(next, sourceSide === 'buy' ? 'sell' : 'buy');
     },
   };
@@ -109,10 +143,10 @@ function createDirectCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapt
   const hedge = async (plan: ExecutionPlan, leg: LegResult, sourceSide: 'buy'|'sell'): Promise<LegResult> => {
     const amount = Number(leg.filled);
     if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
-    if (sourceSide === 'buy') return execute(sellAdapter, 'sell', {...plan, sell:{...plan.sell, amount}});
-    return execute(buyAdapter, 'buy', {...plan, buy:{...plan.buy, amount}});
+    if (sourceSide === 'buy') return execute(sellAdapter, 'sell', {...plan,sell:{...plan.sell,amount}});
+    return execute(buyAdapter, 'buy', {...plan,buy:{...plan.buy,amount}});
   };
-  return {executeBuy: plan => execute(buyAdapter, 'buy', plan), executeSell: plan => execute(sellAdapter, 'sell', plan), hedgeOrExit: (plan, leg, sourceSide = 'buy') => hedge(plan, leg, sourceSide)};
+  return {executeBuy: plan => execute(buyAdapter,'buy',plan),executeSell: plan => execute(sellAdapter,'sell',plan),hedgeOrExit:(plan,leg,sourceSide='buy') => hedge(plan,leg,sourceSide)};
 }
 
 export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapter: CEXAdapter): ExecutionConnector {
@@ -120,7 +154,7 @@ export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdap
     if (process.env.HUMMINGBOT_EXECUTION_ENABLED !== 'true') throw new Error('HUMMINGBOT_LIVE_REQUIRED');
     return createHummingbotPairExecutionConnector(process.env.HUMMINGBOT_BUY_CONNECTOR || buyAdapter.name, process.env.HUMMINGBOT_SELL_CONNECTOR || sellAdapter.name);
   }
-  return createDirectCEXPairExecutionConnector(buyAdapter, sellAdapter);
+  return createDirectCEXPairExecutionConnector(buyAdapter,sellAdapter);
 }
 
 export function createCEXAdapterFromEnv(venue: string): CEXAdapter {
@@ -130,29 +164,31 @@ export function createCEXAdapterFromEnv(venue: string): CEXAdapter {
   const secret = process.env[`${prefix}_API_SECRET`];
   const password = process.env[`${prefix}_PASSWORD`];
   if (!apiKey || !secret) throw new Error(`${prefix}_CREDENTIALS_NOT_CONFIGURED`);
-  return createCEXAdapter(id, {apiKey, secret, ...(password ? {password} : {})});
+  return createCEXAdapter(id,{apiKey,secret,...(password ? {password} : {})});
 }
 
 function withResidual(plan: ExecutionPlan, residual: number): ExecutionPlan {
-  return { ...plan, buy: { ...plan.buy, amount: residual }, sell: { ...plan.sell, amount: residual } };
+  return {...plan,buy:{...plan.buy,amount:residual},sell:{...plan.sell,amount:residual}};
 }
 
 export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, connector:ExecutionConnector, maxUnhedgedMs:number):Promise<{status:string;buy:LegResult;sell:LegResult}> {
-  const activeConnector = process.env.TRADING_MODE === 'LIVE'
-    ? createHummingbotPairExecutionConnector(opportunity.buyVenue, opportunity.sellVenue)
-    : connector;
-  const buy = await activeConnector.executeBuy(plan);
+  if (process.env.TRADING_MODE === 'LIVE') {
+    assertProfitableOpportunity(opportunity);
+    if (process.env.HUMMINGBOT_EXECUTION_ENABLED !== 'true') throw new Error('HUMMINGBOT_LIVE_REQUIRED');
+    connector = createHummingbotPairExecutionConnector(opportunity.buyVenue,opportunity.sellVenue);
+  }
+  const buy = await connector.executeBuy(plan);
   if (buy.status !== 'FULL_FILL') {
-    const residualPlan = withResidual(plan, buy.filled);
-    return {status:'HEDGE_OR_EXIT',buy,sell:await activeConnector.hedgeOrExit(residualPlan,buy,'buy')};
+    const residualPlan = withResidual(plan,buy.filled);
+    return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(residualPlan,buy,'buy')};
   }
   const started = Date.now();
-  const sell = await activeConnector.executeSell(plan);
+  const sell = await connector.executeSell(plan);
   if (sell.status === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
-  const residual = Math.max(0, buy.filled - sell.filled);
+  const residual = Math.max(0,buy.filled-sell.filled);
   if (residual > 0 && Date.now()-started > maxUnhedgedMs) {
-    const residualPlan = withResidual(plan, residual);
-    const hedge = await activeConnector.hedgeOrExit(residualPlan,{...sell,filled:residual},'sell');
+    const residualPlan = withResidual(plan,residual);
+    const hedge = await connector.hedgeOrExit(residualPlan,{...sell,filled:residual},'sell');
     return {status:'HEDGE_OR_EXIT',buy,sell:hedge};
   }
   return {status:'PARTIAL',buy,sell};
