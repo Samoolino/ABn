@@ -1,5 +1,6 @@
 export interface CEXAdapter {
   readonly id: string;
+  readonly name: string;
   connect(): Promise<void>;
   health(): Promise<{ ok: boolean; reason?: string }>;
   markets(): Promise<string[]>;
