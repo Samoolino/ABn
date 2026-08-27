@@ -4,6 +4,7 @@ import { fundedCapitalPolicy } from '@abn/capital-engine';
 import { signerRefConfigured, loadProtectedSignerImplementation } from '@abn/signer';
 import type { FundedSigner } from '@abn/signer';
 import { createCEXAdapterFromEnv, createCEXPairExecutionConnector, executePair } from '@abn/execution';
+import type { CEXAdapter } from '@abn/venue-adapters';
 import type { Opportunity } from '@abn/types';
 
 const requestedMode = process.env.TRADING_MODE || process.env.RUNTIME_MODE || 'STOPPED';
@@ -28,6 +29,44 @@ let signerVerification: { address: string; balance: number; usdEquivalent: numbe
 function signerReady() { return signerRefConfigured(); }
 function isCexVenue(venue: string) {
   return ['mexc','gate','binance','kraken','okx','bybit','coinbase','kucoin','bitfinex','lbank'].includes(venue.toLowerCase());
+}
+
+function splitSymbol(symbol: string): { base: string; quote: string } {
+  const normalized = symbol.trim().toUpperCase().replace('-', '/');
+  const parts = normalized.split('/');
+  if (parts.length !== 2 || !parts[0] || !parts[1]) throw new Error(`SYMBOL_UNSUPPORTED_FOR_BALANCE_GATE:${symbol}`);
+  return { base: parts[0], quote: parts[1] };
+}
+
+function balanceOf(balances: Record<string, number>, asset: string): number {
+  const target = asset.toUpperCase();
+  const key = Object.keys(balances).find(k => k.toUpperCase() === target);
+  const value = key ? Number(balances[key]) : 0;
+  return Number.isFinite(value) && value >= 0 ? value : 0;
+}
+
+async function verifyCexInventory(
+  buyAdapter: CEXAdapter,
+  sellAdapter: CEXAdapter,
+  opportunity: Opportunity,
+): Promise<{ buyQuoteBalance: number; sellBaseBalance: number; source: string }> {
+  const { base, quote } = splitSymbol(opportunity.symbol);
+  const [buyBalances, sellBalances] = await Promise.all([buyAdapter.balances(), sellAdapter.balances()]);
+  const buyQuoteBalance = balanceOf(buyBalances, quote);
+  const sellBaseBalance = balanceOf(sellBalances, base);
+  const requiredQuote = Number(opportunity.capitalRequired);
+  const requiredBase = Number(opportunity.quantity);
+
+  if (!Number.isFinite(requiredQuote) || requiredQuote <= 0) throw new Error('CEX_BUY_CAPITAL_REQUIRED_INVALID');
+  if (!Number.isFinite(requiredBase) || requiredBase <= 0) throw new Error('CEX_SELL_QUANTITY_INVALID');
+  if (buyQuoteBalance < requiredQuote + safetyReserve) {
+    throw new Error(`INSUFFICIENT_CEX_BUY_QUOTE:${buyAdapter.name}:${quote}:${buyQuoteBalance}:required=${requiredQuote}:reserve=${safetyReserve}`);
+  }
+  if (sellBaseBalance < requiredBase) {
+    throw new Error(`INSUFFICIENT_CEX_SELL_BASE:${sellAdapter.name}:${base}:${sellBaseBalance}:required=${requiredBase}`);
+  }
+
+  return { buyQuoteBalance, sellBaseBalance, source: 'CEX_ACCOUNT_BALANCES' };
 }
 
 async function resolveAndVerifySigner(requiredUsd: number) {
@@ -163,12 +202,23 @@ async function refreshControlAndOpportunity() {
     return;
   }
 
-  const capital = await db.query(`select coalesce(sum(available),0) as available from capital_accounts where status='ACTIVE' and source=$1`, [requiredCapitalSource]);
-  const available = Number(capital.rows[0]?.available || 0);
-  const requiredWithReserve = opportunity.capitalRequired + safetyReserve;
-  if (!Number.isFinite(available) || available < requiredWithReserve) {
+  let buyAdapter: CEXAdapter;
+  let sellAdapter: CEXAdapter;
+  try {
+    buyAdapter = createCEXAdapterFromEnv(opportunity.buyVenue);
+    sellAdapter = createCEXAdapterFromEnv(opportunity.sellVenue);
+    await Promise.all([buyAdapter.connect(), sellAdapter.connect()]);
+    const inventory = await verifyCexInventory(buyAdapter, sellAdapter, opportunity);
+    await db.query(`insert into opportunity_events(opportunity_id,event,details) values($1,'AUTHORITATIVE_CAPITAL_VERIFIED',$2::jsonb)`, [
+      opportunity.id,
+      JSON.stringify({source:inventory.source,buyVenue:buyAdapter.name,sellVenue:sellAdapter.name,buyQuoteBalance:inventory.buyQuoteBalance,sellBaseBalance:inventory.sellBaseBalance,requiredCapital:opportunity.capitalRequired,requiredQuantity:opportunity.quantity}),
+    ]);
+  } catch (error) {
     mode = 'ARMED';
-    await db.query(`insert into opportunity_events(opportunity_id,event,details) values($1,'CAPITAL_GATE_REJECTED',$2::jsonb)`, [opportunity.id, JSON.stringify({available, required:opportunity.capitalRequired, reserve:safetyReserve, requiredWithReserve})]);
+    await db.query(`insert into opportunity_events(opportunity_id,event,details) values($1,'AUTHORITATIVE_CAPITAL_REJECTED',$2::jsonb)`, [
+      opportunity.id,
+      JSON.stringify({error:String(error),buyVenue:opportunity.buyVenue,sellVenue:opportunity.sellVenue}),
+    ]);
     return;
   }
 
@@ -176,19 +226,16 @@ async function refreshControlAndOpportunity() {
   mode = 'EXECUTING';
   const correlationId = crypto.randomUUID();
   await db.query(`update opportunities set status='EXECUTING' where id=$1 and status in ('EXECUTABLE','EXECUTABLE_NOW')`, [opportunity.id]);
-  await db.query(`insert into audit_logs(action,details) values($1,$2::jsonb)`, ['TRADE_EXECUTION_STARTED', JSON.stringify({correlationId,opportunityId:opportunity.id,buyVenue:opportunity.buyVenue,sellVenue:opportunity.sellVenue,capitalRequired:opportunity.capitalRequired,reserve:safetyReserve,signerAddress:signerVerification?.address})]);
+  await db.query(`insert into audit_logs(action,details) values($1,$2::jsonb)`, ['TRADE_EXECUTION_STARTED', JSON.stringify({correlationId,opportunityId:opportunity.id,buyVenue:opportunity.buyVenue,sellVenue:opportunity.sellVenue,capitalRequired:opportunity.capitalRequired,reserve:safetyReserve,signerAddress:signerVerification?.address,capitalSource:'CEX_ACCOUNT_BALANCES'})]);
 
   try {
-    const buyAdapter = createCEXAdapterFromEnv(opportunity.buyVenue);
-    const sellAdapter = createCEXAdapterFromEnv(opportunity.sellVenue);
-    await Promise.all([buyAdapter.connect(), sellAdapter.connect()]);
     const connector = createCEXPairExecutionConnector(buyAdapter, sellAdapter);
     const result = await executePair(opportunity, {
       correlationId,
       opportunityId: opportunity.id,
       buy: {symbol:opportunity.symbol, amount:opportunity.quantity, type:'market'},
       sell: {symbol:opportunity.symbol, amount:opportunity.quantity, type:'market'},
-      capital: {available, source:opportunity.capitalSource, commitmentMs:Math.max(1000,maxUnhedgedMs), repayable:false, repaymentAmount:0, collateralRequired:0},
+      capital: {available:opportunity.capitalRequired, source:opportunity.capitalSource, commitmentMs:Math.max(1000,maxUnhedgedMs), repayable:false, repaymentAmount:0, collateralRequired:0},
     }, connector, maxUnhedgedMs);
 
     const finalStatus = result.status === 'COMPLETED' ? 'COMPLETED' : result.status === 'HEDGE_OR_EXIT' ? 'PARTIAL' : 'FAILED';
