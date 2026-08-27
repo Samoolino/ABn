@@ -1,6 +1,7 @@
 import type { Opportunity, CapitalAccess } from '@abn/types';
 import type { CEXAdapter } from '@abn/venue-adapters';
 import { createCEXAdapter } from '@abn/cex-adapters';
+import { createHummingbotClient } from './src/hummingbot.ts';
 
 export type LegResult = {status:'FULL_FILL'|'PARTIAL_FILL'|'REJECTED'|'CANCELLED'|'TIMEOUT'|'UNKNOWN'; filled:number; average?:number; externalId?:string};
 export interface ExecutionPlan { correlationId:string; opportunityId:string; buy:Record<string,unknown>; sell:Record<string,unknown>; capital:CapitalAccess; }
@@ -11,7 +12,81 @@ function requireString(value: unknown, name: string): string {
   return value;
 }
 
-export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapter: CEXAdapter): ExecutionConnector {
+function normalizeHummingbotResult(value: unknown, fallbackId?: string): LegResult {
+  const row = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const rawStatus = String(row.status ?? row.state ?? 'UNKNOWN').toUpperCase();
+  const status: LegResult['status'] =
+    ['CLOSED','FILLED','FULL_FILL','COMPLETED'].includes(rawStatus) ? 'FULL_FILL' :
+    ['OPEN','PENDING','PARTIALLY_FILLED','PARTIAL_FILL','PARTIAL'].includes(rawStatus) ? 'PARTIAL_FILL' :
+    ['CANCELED','CANCELLED'].includes(rawStatus) ? 'CANCELLED' :
+    rawStatus === 'REJECTED' || rawStatus === 'FAILED' ? 'REJECTED' :
+    rawStatus === 'TIMEOUT' ? 'TIMEOUT' : 'UNKNOWN';
+  const filled = Number(row.filled ?? row.executedQty ?? row.executed_quantity ?? 0);
+  const average = row.average ?? row.avgPrice ?? row.average_price;
+  const externalId = String(row.orderId ?? row.order_id ?? row.id ?? fallbackId ?? '');
+  return {status, filled:Number.isFinite(filled) && filled >= 0 ? filled : 0, average:average == null ? undefined : Number(average), externalId:externalId || undefined};
+}
+
+function hummingbotEnabledForLive(): boolean {
+  return process.env.HUMMINGBOT_EXECUTION_ENABLED === 'true';
+}
+
+function createHummingbotPairExecutionConnector(): ExecutionConnector {
+  const baseUrl = process.env.HUMMINGBOT_URL;
+  if (!baseUrl) throw new Error('HUMMINGBOT_URL_NOT_CONFIGURED');
+  const client = createHummingbotClient({
+    baseUrl,
+    apiKey: process.env.HUMMINGBOT_API_KEY,
+    timeoutMs: Number(process.env.HUMMINGBOT_TIMEOUT_MS || '5000'),
+  });
+
+  const execute = async (plan: ExecutionPlan, side: 'buy'|'sell'): Promise<LegResult> => {
+    const leg = side === 'buy' ? plan.buy : plan.sell;
+    const symbol = requireString(leg.symbol, `${side.toUpperCase()}_SYMBOL`);
+    const amount = Number(leg.amount ?? 0);
+    if (!Number.isFinite(amount) || amount <= 0) throw new Error(`${side.toUpperCase()}_AMOUNT_INVALID`);
+    const healthy = await client.health();
+    if (!healthy) throw new Error('HUMMINGBOT_UNHEALTHY');
+    await client.orderBook(symbol);
+    const created = await client.execute({
+      correlationId: plan.correlationId,
+      opportunityId: plan.opportunityId,
+      symbol,
+      side,
+      type: leg.type === 'limit' ? 'limit' : 'market',
+      quantity: amount,
+      price: leg.price == null ? undefined : Number(leg.price),
+    });
+    const initial = normalizeHummingbotResult(created);
+    if (initial.status === 'FULL_FILL' || initial.status === 'REJECTED' || initial.status === 'CANCELLED') return initial;
+    const orderId = initial.externalId;
+    if (!orderId) throw new Error('HUMMINGBOT_ORDER_ID_MISSING');
+    const started = Date.now();
+    const timeoutMs = Number(process.env.EXECUTION_ORDER_TIMEOUT_MS || '5000');
+    let last = initial;
+    while (Date.now() - started < timeoutMs) {
+      await new Promise(resolve => setTimeout(resolve, 250));
+      last = normalizeHummingbotResult(await client.status({orderId, symbol, side}), orderId);
+      if (last.status === 'FULL_FILL' || last.status === 'REJECTED' || last.status === 'CANCELLED') return last;
+    }
+    await client.cancel({orderId, symbol, side}).catch(() => undefined);
+    const final = normalizeHummingbotResult(await client.status({orderId, symbol, side}), orderId);
+    return final.filled > 0 ? {...final, status:'PARTIAL_FILL'} : {...final, status:'TIMEOUT'};
+  };
+
+  return {
+    executeBuy: plan => execute(plan, 'buy'),
+    executeSell: plan => execute(plan, 'sell'),
+    hedgeOrExit: async (plan, leg, sourceSide = 'buy') => {
+      const filled = Number(leg.filled);
+      if (!Number.isFinite(filled) || filled <= 0) return {status:'UNKNOWN', filled:0};
+      const next = sourceSide === 'buy' ? {...plan, sell:{...plan.sell, amount:filled}} : {...plan, buy:{...plan.buy, amount:filled}};
+      return execute(next, sourceSide === 'buy' ? 'sell' : 'buy');
+    },
+  };
+}
+
+function createDirectCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapter: CEXAdapter): ExecutionConnector {
   const execute = async (adapter: CEXAdapter, side: 'buy'|'sell', plan: ExecutionPlan): Promise<LegResult> => {
     const leg = side === 'buy' ? plan.buy : plan.sell;
     const symbol = requireString(leg.symbol, `${side.toUpperCase()}_SYMBOL`);
@@ -34,19 +109,21 @@ export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdap
     const final = await adapter.orderStatus(order.id, symbol);
     return final.filled > 0 ? {status:'PARTIAL_FILL', filled:final.filled, average:final.average, externalId:order.id} : {status:'TIMEOUT', filled:0, externalId:order.id};
   };
-
   const hedge = async (plan: ExecutionPlan, leg: LegResult, sourceSide: 'buy'|'sell'): Promise<LegResult> => {
     const amount = Number(leg.filled);
     if (!Number.isFinite(amount) || amount <= 0) return {status:'UNKNOWN', filled:0};
     if (sourceSide === 'buy') return execute(sellAdapter, 'sell', {...plan, sell:{...plan.sell, amount}});
     return execute(buyAdapter, 'buy', {...plan, buy:{...plan.buy, amount}});
   };
+  return {executeBuy: plan => execute(buyAdapter, 'buy', plan), executeSell: plan => execute(sellAdapter, 'sell', plan), hedgeOrExit: (plan, leg, sourceSide = 'buy') => hedge(plan, leg, sourceSide)};
+}
 
-  return {
-    executeBuy: plan => execute(buyAdapter, 'buy', plan),
-    executeSell: plan => execute(sellAdapter, 'sell', plan),
-    hedgeOrExit: (plan, leg, sourceSide = 'buy') => hedge(plan, leg, sourceSide),
-  };
+export function createCEXPairExecutionConnector(buyAdapter: CEXAdapter, sellAdapter: CEXAdapter): ExecutionConnector {
+  if (process.env.TRADING_MODE === 'LIVE') {
+    if (!hummingbotEnabledForLive()) throw new Error('HUMMINGBOT_LIVE_REQUIRED');
+    return createHummingbotPairExecutionConnector();
+  }
+  return createDirectCEXPairExecutionConnector(buyAdapter, sellAdapter);
 }
 
 export function createCEXAdapterFromEnv(venue: string): CEXAdapter {
@@ -70,17 +147,14 @@ export async function executePair(opportunity:Opportunity, plan:ExecutionPlan, c
     const residualPlan = withResidual(plan, buy.filled);
     return {status:'HEDGE_OR_EXIT',buy,sell:await connector.hedgeOrExit(residualPlan,buy,'buy')};
   }
-
   const started = Date.now();
   const sell = await connector.executeSell(plan);
-  if ((sell.status as string) === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
-
+  if (sell.status === 'FULL_FILL') return {status:'COMPLETED',buy,sell};
   const residual = Math.max(0, buy.filled - sell.filled);
   if (residual > 0 && Date.now()-started > maxUnhedgedMs) {
     const residualPlan = withResidual(plan, residual);
     const hedge = await connector.hedgeOrExit(residualPlan,{...sell,filled:residual},'sell');
     return {status:'HEDGE_OR_EXIT',buy,sell:hedge};
   }
-
   return {status:'PARTIAL',buy,sell};
 }
