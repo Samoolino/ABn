@@ -21,12 +21,13 @@ function normalizeHummingbotResult(value: unknown, fallbackId?: string): LegResu
   return {status,filled:Number.isFinite(filled) && filled >= 0 ? filled : 0,average:average == null ? undefined : Number(average),externalId:externalId || undefined};
 }
 
+type OrderBookLevel = { price?: unknown; amount?: unknown; quantity?: unknown; size?: unknown };
 function vwap(levels: unknown, quantity: number): number | null {
   if (!Array.isArray(levels) || !Number.isFinite(quantity) || quantity <= 0) return null;
   let remaining=quantity, notional=0, filled=0;
   for (const level of levels) {
     if (!Array.isArray(level) && (!level || typeof level !== 'object')) continue;
-    const row = Array.isArray(level) ? {price:level[0],amount:level[1]} : level as Record<string,unknown>;
+    const row: OrderBookLevel = Array.isArray(level) ? {price:level[0],amount:level[1]} : level as OrderBookLevel;
     const price=Number(row.price), amount=Number(row.amount ?? row.quantity ?? row.size);
     if (!Number.isFinite(price)||!Number.isFinite(amount)||price<=0||amount<=0) continue;
     const take=Math.min(remaining,amount); notional+=take*price; filled+=take; remaining-=take;
