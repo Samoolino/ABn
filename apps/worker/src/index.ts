@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import { createDatabasePool } from '@abn/database';
 import { createRedisClient } from '@abn/redis';
 import { fundedCapitalPolicy } from '@abn/capital-engine';
