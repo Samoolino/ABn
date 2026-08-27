@@ -6,9 +6,11 @@ const FACTORIES: Record<CEXId, new (config?: Record<string, unknown>) => any> = 
 
 export class CcxtCEXAdapter implements CEXAdapter {
   readonly id: CEXId;
+  readonly name: string;
   private readonly exchange: any;
   constructor(id: CEXId, credentials: CcxtCredentials) {
     this.id = id;
+    this.name = id;
     const Factory = FACTORIES[id];
     if (!Factory) throw new Error(`${id.toUpperCase()}_NOT_SUPPORTED`);
     if (!credentials.apiKey || !credentials.secret) throw new Error(`${id.toUpperCase()}_NOT_CONFIGURED`);
