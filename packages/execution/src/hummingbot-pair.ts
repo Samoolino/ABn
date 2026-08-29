@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type { Opportunity } from '@abn/types';
 import type { HummingbotClient } from './hummingbot';
 
@@ -21,8 +22,7 @@ function extractOrderId(value: unknown): string | undefined {
     if (typeof candidate === 'string' && candidate.length > 0) return candidate;
   }
   for (const key of ['data', 'order', 'result']) {
-    const nested = record[key];
-    const id = extractOrderId(nested);
+    const id = extractOrderId(record[key]);
     if (id) return id;
   }
   return undefined;
@@ -31,8 +31,7 @@ function extractOrderId(value: unknown): string | undefined {
 function statusFor(value: unknown, orderId: string): string | undefined {
   if (!value || typeof value !== 'object') return undefined;
   const record = value as Record<string, unknown>;
-  const direct = record.status;
-  if (typeof direct === 'string') return direct.toLowerCase();
+  if (typeof record.status === 'string') return record.status.toLowerCase();
   for (const key of ['data', 'items', 'orders', 'results']) {
     const nested = record[key];
     if (Array.isArray(nested)) {
@@ -77,7 +76,6 @@ export async function executeHummingbotPair(
   if (!Number.isFinite(input.buy.amount) || input.buy.amount <= 0 || !Number.isFinite(input.sell.amount) || input.sell.amount <= 0) throw new Error('HUMMINGBOT_ORDER_AMOUNT_INVALID');
   if (!input.accountName) throw new Error('HUMMINGBOT_ACCOUNT_REQUIRED');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('HUMMINGBOT_TIMEOUT_INVALID');
-
   if (!(await client.health())) throw new Error('HUMMINGBOT_HEALTHCHECK_FAILED');
   await Promise.all([
     client.orderBook(input.buy.tradingPair, input.buy.connectorName),
@@ -102,11 +100,9 @@ export async function executeHummingbotPair(
   ]);
 
   if (filled(buyStatus) && filled(sellStatus)) return { status: 'COMPLETED', buyOrderId, sellOrderId };
-
   await Promise.allSettled([
     filled(buyStatus) ? Promise.resolve() : client.cancel({ account_name: input.accountName, connector_name: input.buy.connectorName, client_order_id: buyOrderId }),
     filled(sellStatus) ? Promise.resolve() : client.cancel({ account_name: input.accountName, connector_name: input.sell.connectorName, client_order_id: sellOrderId }),
   ]);
-
   return { status: Date.now() >= deadline ? 'TIMEOUT' : 'FAILED', buyOrderId, sellOrderId };
 }
