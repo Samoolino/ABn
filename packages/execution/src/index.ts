@@ -14,3 +14,4 @@ export * from './rpc-dex-source';
 export * from './dex-runtime-registry';
 export * from './coordinated-runtime-preflight';
 export * from './runtime-config-gate';
+export * from './cex-pair';
