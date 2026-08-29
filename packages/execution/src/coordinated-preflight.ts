@@ -25,7 +25,11 @@ export interface CoordinatedPreflightResult {
   legs?: [LegPreflightResult, LegPreflightResult];
 }
 
-/** Validates both legs before execution release; never submits an order. */
+/**
+ * Validates both legs before execution release; never submits an order.
+ * Wallet/allowance requirements are DEX-specific; CEX legs must not be
+ * rejected merely because those on-chain fields are not applicable.
+ */
 export async function preflightCoordinatedExecution(input: CoordinatedPreflightInput): Promise<CoordinatedPreflightResult> {
   if (!input.plan || input.plan.legs.length !== 2) return { ready: false, reason: 'COORDINATED_TWO_LEGS_REQUIRED' };
   if (!Number.isFinite(input.minNetProfit) || input.minNetProfit < 0) return { ready: false, reason: 'COORDINATED_MIN_PROFIT_INVALID' };
@@ -34,13 +38,17 @@ export async function preflightCoordinatedExecution(input: CoordinatedPreflightI
   const now = input.now ?? Date.now();
   const legs = await Promise.all(input.plan.legs.map((leg) => input.preflightLeg(leg))) as [LegPreflightResult, LegPreflightResult];
 
-  for (const leg of legs) {
+  for (let i = 0; i < legs.length; i += 1) {
+    const leg = legs[i];
+    const definition = input.plan.legs[i];
     if (!leg.ready) return { ready: false, reason: leg.reason ?? 'COORDINATED_LEG_PREFLIGHT_FAILED', legs };
     if (leg.requiredCapital !== undefined && leg.availableCapital !== undefined && leg.availableCapital < leg.requiredCapital) {
       return { ready: false, reason: 'COORDINATED_INSUFFICIENT_CAPITAL', legs };
     }
-    if (leg.walletReady !== true) return { ready: false, reason: 'COORDINATED_WALLET_NOT_READY', legs };
-    if (leg.allowanceReady !== true) return { ready: false, reason: 'COORDINATED_ALLOWANCE_NOT_READY', legs };
+    if (definition.kind === 'DEX') {
+      if (leg.walletReady !== true) return { ready: false, reason: 'COORDINATED_WALLET_NOT_READY', legs };
+      if (leg.allowanceReady !== true) return { ready: false, reason: 'COORDINATED_ALLOWANCE_NOT_READY', legs };
+    }
     if (!Number.isFinite(leg.quoteTimestampMs) || now - Number(leg.quoteTimestampMs) > input.maxQuoteAgeMs || Number(leg.quoteTimestampMs) > now) {
       return { ready: false, reason: 'COORDINATED_QUOTE_STALE', legs };
     }
