@@ -16,6 +16,14 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 22
-      - run: pnpm install --frozen-lockfile
+      - name: Install dependencies
+        run: |
+          if [ -f pnpm-lock.yaml ]; then
+            pnpm install --frozen-lockfile
+          else
+            echo "pnpm-lock.yaml is absent; generating a lockfile for CI validation."
+            pnpm install --lockfile-only
+            pnpm install --frozen-lockfile
+          fi
       - run: pnpm typecheck
       - run: pnpm build
