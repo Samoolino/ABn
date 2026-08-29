@@ -7,10 +7,7 @@ export interface CoordinatedPlanValidation {
   plan?: CoordinatedExecutionPlan;
 }
 
-/**
- * Fail-closed validation boundary for mixed CEX/DEX and DEX/DEX opportunities.
- * No execution is released here.
- */
+/** Fail-closed validation boundary. It never submits an order. */
 export function validateCoordinatedOpportunity(
   opportunity: Opportunity,
   input: {
@@ -23,8 +20,9 @@ export function validateCoordinatedOpportunity(
   },
 ): CoordinatedPlanValidation {
   const nowMs = input.nowMs ?? Date.now();
+  const netProfit = Number(opportunity.netProfit ?? opportunity.expectedNetProfit ?? 0);
 
-  if (!Number.isFinite(opportunity.netProfit) || opportunity.netProfit <= input.minNetProfit) {
+  if (!Number.isFinite(netProfit) || netProfit <= input.minNetProfit) {
     return { accepted: false, reason: 'COORDINATED_NET_PROFIT_GATE_REJECTED' };
   }
   if (!Number.isFinite(opportunity.quoteTimestamp) || opportunity.quoteTimestamp <= 0) {
@@ -40,8 +38,7 @@ export function validateCoordinatedOpportunity(
     return { accepted: false, reason: 'COORDINATED_QUOTE_EXPIRED' };
   }
   try {
-    const plan = createCoordinatedExecutionPlan(opportunity, input);
-    return { accepted: true, plan };
+    return { accepted: true, plan: createCoordinatedExecutionPlan(opportunity, input) };
   } catch (error) {
     return { accepted: false, reason: String(error) };
   }
