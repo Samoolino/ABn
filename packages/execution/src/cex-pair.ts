@@ -1,5 +1,5 @@
-import { createCEXAdapter, type CEXId } from '@abn/cex-adapters';
-import type { CEXAdapter } from '@abn/venue-adapters';
+import { createCEXAdapter } from '@abn/cex-adapters';
+import type { CEXId, CEXAdapter } from '@abn/venue-adapters';
 import type { Opportunity } from '@abn/types';
 
 export interface PairExecutionConnector {
@@ -49,7 +49,8 @@ export async function executePair(
   connector: PairExecutionConnector,
   timeoutMs: number,
 ): Promise<PairExecutionResult> {
-  if (opportunity.expectedNetProfit === undefined || opportunity.expectedNetProfit <= 0) throw new Error('PAIR_NET_PROFIT_GATE_REJECTED');
+  if (!Number.isFinite(opportunity.expectedNetProfit) || opportunity.expectedNetProfit <= 0) throw new Error('PAIR_NET_PROFIT_GATE_REJECTED');
+  if (!Number.isFinite(opportunity.capitalRequired) || opportunity.capitalRequired <= 0) throw new Error('PAIR_CAPITAL_REQUIRED_INVALID');
   if (opportunity.expiresAt <= Date.now()) throw new Error('PAIR_OPPORTUNITY_EXPIRED');
   if (input.capital.source !== 'FUNDED_INVENTORY') throw new Error('PAIR_CAPITAL_SOURCE_REJECTED');
   if (!Number.isFinite(input.capital.available) || input.capital.available < opportunity.capitalRequired) throw new Error('PAIR_CAPITAL_INSUFFICIENT');
