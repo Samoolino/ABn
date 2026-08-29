@@ -61,6 +61,6 @@ export function createHummingbotClient(config: HummingbotConfig): HummingbotClie
       if (!connector || !clientOrderId) throw new Error('HUMMINGBOT_CANCEL_IDENTIFIERS_MISSING');
       return request(`/trading/${encodeURIComponent(account)}/${encodeURIComponent(connector)}/orders/${encodeURIComponent(clientOrderId)}/cancel`, { method: 'POST', body: JSON.stringify({}) });
     },
-    status: (payload = {}) => request('/trading/orders/search', { method: 'POST', body: JSON.stringify(payload })),
+    status: (payload = {}) => request('/trading/orders/search', { method: 'POST', body: JSON.stringify(payload) }),
   };
 }
