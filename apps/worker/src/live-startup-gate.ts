@@ -8,6 +8,7 @@ export interface LiveStartupGateInput {
   expectedChainIds?: Record<string, number>;
   signerConfigured: boolean;
   executionEnabled: boolean;
+  hummingbotConfigured: boolean;
 }
 
 export interface LiveStartupGateResult {
@@ -23,6 +24,7 @@ export function validateLiveStartup(input: LiveStartupGateInput): LiveStartupGat
   if (!liveRequested) return { allowed: true, mode: input.mode.toUpperCase() === 'DRY_RUN' ? 'DRY_RUN' : 'STOPPED', reasons };
   if (!input.executionEnabled) reasons.push('LIVE_EXECUTION_DISABLED');
   if (!input.signerConfigured) reasons.push('SIGNER_NOT_CONFIGURED');
+  if (!input.hummingbotConfigured) reasons.push('HUMMINGBOT_CONFIGURATION_REQUIRED');
 
   for (const network of input.requiredNetworks) {
     const id = network.trim().toLowerCase();
