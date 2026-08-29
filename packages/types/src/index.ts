@@ -6,6 +6,15 @@ export type OpportunityStatus =
 
 export type CapitalSource = 'FUNDED_INVENTORY' | 'CEX_ACCOUNT_BALANCES' | 'FLASH_LOAN' | 'OTHER';
 
+export interface CapitalAccess {
+  source: CapitalSource;
+  available: number;
+  commitmentMs: number;
+  repayable: boolean;
+  repaymentAmount: number;
+  collateralRequired: number;
+}
+
 export interface TokenRef { chainId: number; address: string; symbol: string; decimals: number }
 
 export interface NormalizedQuote {
@@ -37,13 +46,13 @@ export interface Opportunity {
   settlementCost: number;
   safetyReserve: number;
   netProfit: number;
-  /** Compatibility alias used by the worker/database projection. */
-  expectedNetProfit?: number;
+  /** Canonical net-profit value used by execution gates. */
+  expectedNetProfit: number;
   netProfitPct: number;
   /** Capital required for the selected opportunity size. */
-  capitalRequired?: number;
+  capitalRequired: number;
   /** Policy source from which execution capital is expected. */
-  capitalSource?: CapitalSource;
+  capitalSource: CapitalSource;
   quoteTimestamp: number;
   expiresAt: number;
   status: OpportunityStatus;
