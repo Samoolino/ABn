@@ -12,6 +12,7 @@ export function validateWorkerLiveConfiguration(input: {
   mode: string;
   executionEnabled: boolean;
   signerConfigured: boolean;
+  hummingbotConfigured: boolean;
 }): ReturnType<typeof validateLiveStartup> {
   const registry = buildRegistryFromEnvironment({
     requiredNetworks: NETWORKS.map(([network, chainId, env]) => ({
@@ -29,5 +30,6 @@ export function validateWorkerLiveConfiguration(input: {
     expectedChainIds: Object.fromEntries(NETWORKS.map(([network, chainId]) => [network, chainId])),
     signerConfigured: input.signerConfigured,
     executionEnabled: input.executionEnabled,
+    hummingbotConfigured: input.hummingbotConfigured,
   });
 }
