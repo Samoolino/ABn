@@ -4,6 +4,7 @@ export function enforceLiveStartupConfiguration(input: {
   mode: string;
   executionEnabled: boolean;
   signerConfigured: boolean;
+  hummingbotConfigured: boolean;
 }): { mode: string; allowed: boolean; reasons: string[] } {
   const result = validateWorkerLiveConfiguration(input);
   if (!result.allowed) {
