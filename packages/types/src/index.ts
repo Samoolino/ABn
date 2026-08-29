@@ -4,6 +4,8 @@ export type OpportunityStatus =
   | 'DISCOVERED' | 'VALIDATING' | 'EXECUTABLE' | 'EXECUTING'
   | 'PARTIAL' | 'SETTLING' | 'COMPLETED' | 'REJECTED' | 'FAILED' | 'EXPIRED';
 
+export type CapitalSource = 'FUNDED_INVENTORY' | 'CEX_ACCOUNT_BALANCES' | 'FLASH_LOAN' | 'OTHER';
+
 export interface TokenRef { chainId: number; address: string; symbol: string; decimals: number }
 
 export interface NormalizedQuote {
@@ -20,7 +22,7 @@ export interface NormalizedQuote {
 
 export interface Opportunity {
   id: string;
-  correlationId: string;
+  correlationId?: string;
   symbol: string;
   buyVenue: string;
   sellVenue: string;
@@ -35,10 +37,17 @@ export interface Opportunity {
   settlementCost: number;
   safetyReserve: number;
   netProfit: number;
+  /** Compatibility alias used by the worker/database projection. */
+  expectedNetProfit?: number;
   netProfitPct: number;
+  /** Capital required for the selected opportunity size. */
+  capitalRequired?: number;
+  /** Policy source from which execution capital is expected. */
+  capitalSource?: CapitalSource;
   quoteTimestamp: number;
   expiresAt: number;
   status: OpportunityStatus;
+  confidence?: number;
 }
 
 export interface ProfitAssertionInput {
