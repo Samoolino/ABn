@@ -5,6 +5,7 @@ export interface DexExecutionRequest {
   opportunity: Opportunity;
   connector: string;
   network: string;
+  side: 'BUY' | 'SELL';
   walletAddress?: string;
   clientOrderId: string;
   minNetProfit: number;
@@ -32,23 +33,29 @@ export async function executeDexOpportunity(
   if (!Number.isFinite(request.maxSlippagePct) || request.maxSlippagePct <= 0) {
     throw new Error('DEX_SLIPPAGE_POLICY_INVALID');
   }
+  if (!Number.isFinite(request.maxConfirmMs) || request.maxConfirmMs <= 0) {
+    throw new Error('DEX_CONFIRM_TIMEOUT_INVALID');
+  }
 
   const quote = await gateway.quote({
     connector: request.connector,
     network: request.network,
     tradingPair: request.opportunity.symbol,
-    side: 'BUY',
+    side: request.side,
     amount: String(request.opportunity.quantity),
     slippagePct: request.maxSlippagePct,
   });
 
   if (!quote.amountIn || !quote.amountOut) throw new Error('DEX_QUOTE_NOT_EXECUTABLE');
+  if (quote.expiresAt !== undefined && quote.expiresAt <= Date.now()) {
+    throw new Error('DEX_QUOTE_EXPIRED');
+  }
 
   const swap = await gateway.executeSwap({
     connector: request.connector,
     network: request.network,
     tradingPair: request.opportunity.symbol,
-    side: 'BUY',
+    side: request.side,
     amount: String(request.opportunity.quantity),
     slippagePct: request.maxSlippagePct,
     walletAddress: request.walletAddress,
