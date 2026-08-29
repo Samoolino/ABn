@@ -1,4 +1,5 @@
 export * from './hummingbot';
+export * from './hummingbot-pair';
 export * from './dex-gateway';
 export * from './dex-execution';
 export * from './dex-runtime';
