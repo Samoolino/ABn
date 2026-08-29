@@ -4,7 +4,7 @@ import { createRedisClient } from '@abn/redis';
 import { fundedCapitalPolicy } from '@abn/capital-engine';
 import { signerRefConfigured, loadProtectedSignerImplementation } from '@abn/signer';
 import type { FundedSigner } from '@abn/signer';
-import { createCEXAdapterFromEnv, createCEXPairExecutionConnector, executePair } from '@abn/execution';
+import { createCEXAdapterFromEnv, createCEXPairExecutionConnector, executePair, validateCoordinatedOpportunity } from '@abn/execution';
 import type { CEXAdapter } from '@abn/venue-adapters';
 import type { Opportunity } from '@abn/types';
 
@@ -198,8 +198,11 @@ async function refreshControlAndOpportunity() {
   }
 
   if (!isCexVenue(opportunity.buyVenue) || !isCexVenue(opportunity.sellVenue)) {
+    const correlationId = crypto.randomUUID();
+    const validation = validateCoordinatedOpportunity(opportunity, { correlationId, maxUnhedgedMs, minNetProfit: safetyReserve, isCexVenue });
     mode = 'ARMED_EXECUTION_READY';
-    console.log(JSON.stringify({event:'live_blocked', reason:'DEX_EXECUTOR_NOT_CONFIGURED', opportunityId:opportunity.id}));
+    await db.query(`insert into opportunity_events(opportunity_id,event,details) values($1,$2,$3::jsonb)`, [opportunity.id, validation.accepted ? 'COORDINATED_PLAN_VALIDATED' : 'COORDINATED_PLAN_REJECTED', JSON.stringify({correlationId,reason:validation.reason,plan:validation.plan,executionReleased:false})]);
+    console.log(JSON.stringify({event:validation.accepted?'coordinated_plan_ready':'coordinated_plan_rejected',correlationId,opportunityId:opportunity.id,reason:validation.reason,executionReleased:false}));
     return;
   }
 
