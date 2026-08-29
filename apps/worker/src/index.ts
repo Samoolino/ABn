@@ -3,7 +3,7 @@ import { createDatabasePool } from '@abn/database';
 import { createRedisClient } from '@abn/redis';
 import { fundedCapitalPolicy } from '@abn/capital-engine';
 import { signerRefConfigured, loadProtectedSignerImplementation } from '@abn/signer';
-import { createCEXAdapterFromEnv, createCEXPairExecutionConnector, executePair, executeHummingbotPair, createHummingbotClient, validateCoordinatedOpportunity } from '@abn/execution';
+import { createCEXAdapterFromEnv, executeHummingbotPair, createHummingbotClient, validateCoordinatedOpportunity } from '@abn/execution';
 import type { FundedSigner } from '@abn/signer';
 import type { CEXAdapter } from '@abn/venue-adapters';
 import type { Opportunity } from '@abn/types';
@@ -24,6 +24,7 @@ const hummingbotAccount = process.env.HUMMINGBOT_ACCOUNT || 'master_account';
 const hummingbotUsername = process.env.HUMMINGBOT_USERNAME;
 const hummingbotPassword = process.env.HUMMINGBOT_PASSWORD;
 const hummingbotApiKey = process.env.HUMMINGBOT_API_KEY;
+const hummingbotConfigured = Boolean(hummingbotBaseUrl && (hummingbotApiKey || (hummingbotUsername && hummingbotPassword)));
 
 let mode = requestedMode;
 let controlStatus = 'STOPPED';
@@ -31,7 +32,12 @@ let executing = false;
 let fundedSigner: FundedSigner | null = null;
 let signerVerification: { address: string; balance: number; usdEquivalent: number } | null = null;
 
-const startup = enforceLiveStartupConfiguration({ mode: requestedMode, executionEnabled, signerConfigured: signerRefConfigured() });
+const startup = enforceLiveStartupConfiguration({
+  mode: requestedMode,
+  executionEnabled,
+  signerConfigured: signerRefConfigured(),
+  hummingbotConfigured,
+});
 if (!startup.allowed) {
   mode = startup.mode;
   console.error(JSON.stringify({ event: 'live_startup_blocked', requestedMode, mode, reasons: startup.reasons }));
@@ -55,8 +61,7 @@ async function resolveAndVerifySigner(requiredUsd:number){ if(!signerReady()) th
 
 function mapOpportunity(row:Record<string,unknown>):Opportunity { const netProfit=Number(row.net_profit??row.expected_net_profit??0); return {id:String(row.id),correlationId:row.correlation_id?String(row.correlation_id):undefined,symbol:String(row.symbol),buyVenue:String(row.buy_venue),sellVenue:String(row.sell_venue),buyNetwork:row.buy_network?String(row.buy_network):undefined,sellNetwork:row.sell_network?String(row.sell_network):undefined,quantity:Number(row.quantity),grossProfit:Number(row.gross_profit||0),tradingFees:Number(row.trading_fees||0),gasCost:Number(row.gas_cost||0),slippageCost:Number(row.slippage_cost||0),bridgeCost:Number(row.bridge_cost||0),settlementCost:Number(row.settlement_cost||0),safetyReserve:Number(row.safety_reserve||safetyReserve),netProfit,expectedNetProfit:netProfit,netProfitPct:Number(row.net_profit_pct||0),capitalRequired:Number(row.capital_required),capitalSource:String(row.capital_source||'FUNDED_INVENTORY') as Opportunity['capitalSource'],status:String(row.status) as Opportunity['status'],quoteTimestamp:Number(row.quote_timestamp||0),expiresAt:new Date(String(row.expires_at)).getTime(),confidence:Number(row.confidence||0)}; }
 
-async function refreshControlAndOpportunity(){ if(!db||executing)return; controlStatus=(await db.query(`select status from system_health where component='trading_control' limit 1`)).rows[0]?.status||'STOPPED'; if(mode==='DRY_RUN'||requestedMode!=='LIVE'||controlStatus!=='ARMED'){if(requestedMode!=='LIVE')mode=requestedMode==='DRY_RUN'?'DRY_RUN':'STOPPED';return;} if(!startup.allowed)return; if(!signerReady()){mode='DRY_RUN';return;}
-  if(!hummingbotBaseUrl || (!hummingbotApiKey && !hummingbotUsername)) throw new Error('LIVE_HUMMINGBOT_CONFIGURATION_REQUIRED');
+async function refreshControlAndOpportunity(){ if(!db||executing)return; controlStatus=(await db.query(`select status from system_health where component='trading_control' limit 1`)).rows[0]?.status||'STOPPED'; if(mode==='DRY_RUN'||requestedMode!=='LIVE'||controlStatus!=='ARMED'){if(requestedMode!=='LIVE')mode=requestedMode==='DRY_RUN'?'DRY_RUN':'STOPPED';return;} if(!startup.allowed)return; if(!signerReady()||!hummingbotConfigured){mode='DRY_RUN';return;}
   const candidate=await db.query(`select * from opportunities where status in ('EXECUTABLE','EXECUTABLE_NOW') and expires_at>now() and expected_net_profit>$1 order by expected_net_profit/greatest(capital_required,0.00000001) desc limit 1`,[safetyReserve]);
   const row=candidate.rows[0] as Record<string,unknown>|undefined;if(!row)return; const opportunity=mapOpportunity(row); if(opportunity.capitalSource!=='FUNDED_INVENTORY'||!Number.isFinite(opportunity.capitalRequired)||opportunity.capitalRequired<=0||opportunity.capitalRequired>policy.maxWorkingUsd)return; if(!isCexVenue(opportunity.buyVenue)||!isCexVenue(opportunity.sellVenue))return;
   let buyAdapter:CEXAdapter;let sellAdapter:CEXAdapter; try{buyAdapter=createCEXAdapterFromEnv(opportunity.buyVenue);sellAdapter=createCEXAdapterFromEnv(opportunity.sellVenue);await Promise.all([buyAdapter.connect(),sellAdapter.connect()]);await verifyCexInventory(buyAdapter,sellAdapter,opportunity);await resolveAndVerifySigner(opportunity.capitalRequired);}catch(error){mode='ARMED';console.error(JSON.stringify({event:'capital_or_signer_preflight_rejected',opportunityId:opportunity.id,error:String(error)}));return;}
@@ -68,5 +73,5 @@ async function refreshControlAndOpportunity(){ if(!db||executing)return; control
   }catch(error){mode='EMERGENCY_STOP';console.error(JSON.stringify({event:'execution_error',correlationId,opportunityId:opportunity.id,error:String(error)}));}finally{executing=false;}
 }
 
-console.log(JSON.stringify({event:'worker_start',mode,requestedMode,executionEnabled,capitalAsset,signerNetwork,hummingbotConfigured:Boolean(hummingbotBaseUrl&&(hummingbotApiKey||(hummingbotUsername&&hummingbotPassword))),startupGate:startup}));
+console.log(JSON.stringify({event:'worker_start',mode,requestedMode,executionEnabled,capitalAsset,signerNetwork,hummingbotConfigured,startupGate:startup}));
 setInterval(()=>{void refreshControlAndOpportunity().catch(error=>{mode='EMERGENCY_STOP';console.error(JSON.stringify({event:'execution_gate_error',error:String(error)}));});},Math.max(250,interval));
