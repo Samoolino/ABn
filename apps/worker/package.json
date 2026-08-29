@@ -2,7 +2,7 @@
   "name": "@abn/worker",
   "private": true,
   "type": "module",
-  "scripts": {"dev":"tsx src/index.ts","build":"tsc","typecheck":"tsc --noEmit"},
+  "scripts": {"dev":"tsx src/bootstrap.ts","start":"tsx src/bootstrap.ts","build":"tsc","typecheck":"tsc --noEmit"},
   "dependencies": {
     "@abn/capital-engine":"workspace:*",
     "@abn/cex-adapters":"workspace:*",
