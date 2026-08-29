@@ -9,6 +9,7 @@ export interface HummingbotConfig {
 export interface HummingbotClient {
   health(): Promise<boolean>;
   markets(): Promise<unknown>;
+  tradingRules(connectorName: string, tradingPair: string): Promise<unknown>;
   orderBook(symbol: string, connectorName: string): Promise<unknown>;
   execute(payload: Record<string, unknown>): Promise<unknown>;
   cancel(payload: Record<string, unknown>): Promise<unknown>;
@@ -47,9 +48,10 @@ export function createHummingbotClient(config: HummingbotConfig): HummingbotClie
       }
     },
     markets: () => request('/connectors/'),
+    tradingRules: (connectorName, tradingPair) => request(`/connectors/${encodeURIComponent(connectorName)}/trading-rules?trading_pairs=${encodeURIComponent(tradingPair)}`),
     orderBook: (symbol, connectorName) => request('/market-data/order-book', {
       method: 'POST',
-      body: JSON.stringify({ connector_name: connectorName, trading_pair: symbol, depth: 20 }),
+      body: JSON.stringify({ connector_name: connectorName, trading_pair: symbol, depth: 100 }),
     }),
     execute: (payload) => request('/trading/orders', { method: 'POST', body: JSON.stringify(payload) }),
     cancel: (payload) => {
@@ -59,6 +61,6 @@ export function createHummingbotClient(config: HummingbotConfig): HummingbotClie
       if (!connector || !clientOrderId) throw new Error('HUMMINGBOT_CANCEL_IDENTIFIERS_MISSING');
       return request(`/trading/${encodeURIComponent(account)}/${encodeURIComponent(connector)}/orders/${encodeURIComponent(clientOrderId)}/cancel`, { method: 'POST', body: JSON.stringify({}) });
     },
-    status: (payload = {}) => request('/trading/orders/search', { method: 'POST', body: JSON.stringify(payload) }),
+    status: (payload = {}) => request('/trading/orders/search', { method: 'POST', body: JSON.stringify(payload })),
   };
 }
