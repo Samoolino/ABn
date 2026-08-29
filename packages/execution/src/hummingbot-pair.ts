@@ -46,6 +46,51 @@ function statusFor(value: unknown, orderId: string): string | undefined {
   return undefined;
 }
 
+function levelsFor(value: unknown, side: 'bids' | 'asks'): Array<[number, number]> {
+  if (!value || typeof value !== 'object') return [];
+  const record = value as Record<string, unknown>;
+  const direct = record[side];
+  if (Array.isArray(direct)) {
+    return direct.flatMap((entry) => {
+      if (Array.isArray(entry) && entry.length >= 2) {
+        const price = Number(entry[0]);
+        const amount = Number(entry[1]);
+        return Number.isFinite(price) && Number.isFinite(amount) && price > 0 && amount > 0 ? [[price, amount] as [number, number]] : [];
+      }
+      if (entry && typeof entry === 'object') {
+        const item = entry as Record<string, unknown>;
+        const price = Number(item.price ?? item.rate);
+        const amount = Number(item.amount ?? item.quantity ?? item.size);
+        return Number.isFinite(price) && Number.isFinite(amount) && price > 0 && amount > 0 ? [[price, amount] as [number, number]] : [];
+      }
+      return [];
+    });
+  }
+  for (const key of ['data', 'order_book', 'orderBook', 'result']) {
+    const nested = levelsFor(record[key], side);
+    if (nested.length) return nested;
+  }
+  return [];
+}
+
+function hasExecutableDepth(value: unknown, side: 'bids' | 'asks', amount: number): boolean {
+  const levels = levelsFor(value, side);
+  let cumulative = 0;
+  for (const [, levelAmount] of levels) {
+    cumulative += levelAmount;
+    if (cumulative >= amount) return true;
+  }
+  return false;
+}
+
+function rulesPresent(value: unknown): boolean {
+  if (!value || typeof value !== 'object') return false;
+  const record = value as Record<string, unknown>;
+  if (Object.keys(record).length === 0) return false;
+  if ('data' in record) return rulesPresent(record.data);
+  return Object.keys(record).length > 0;
+}
+
 function filled(status: string | undefined): boolean {
   return status === 'filled' || status === 'closed' || status === 'completed';
 }
@@ -77,10 +122,17 @@ export async function executeHummingbotPair(
   if (!input.accountName) throw new Error('HUMMINGBOT_ACCOUNT_REQUIRED');
   if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new Error('HUMMINGBOT_TIMEOUT_INVALID');
   if (!(await client.health())) throw new Error('HUMMINGBOT_HEALTHCHECK_FAILED');
-  await Promise.all([
+
+  const [buyRules, sellRules, buyBook, sellBook] = await Promise.all([
+    client.tradingRules(input.buy.connectorName, input.buy.tradingPair),
+    client.tradingRules(input.sell.connectorName, input.sell.tradingPair),
     client.orderBook(input.buy.tradingPair, input.buy.connectorName),
     client.orderBook(input.sell.tradingPair, input.sell.connectorName),
   ]);
+
+  if (!rulesPresent(buyRules) || !rulesPresent(sellRules)) throw new Error('HUMMINGBOT_TRADING_RULES_UNAVAILABLE');
+  if (!hasExecutableDepth(buyBook, 'asks', input.buy.amount)) throw new Error('HUMMINGBOT_BUY_DEPTH_INSUFFICIENT');
+  if (!hasExecutableDepth(sellBook, 'bids', input.sell.amount)) throw new Error('HUMMINGBOT_SELL_DEPTH_INSUFFICIENT');
 
   const correlationId = opportunity.correlationId || crypto.randomUUID();
   const buyClientOrderId = `abn-${correlationId}-buy`;
