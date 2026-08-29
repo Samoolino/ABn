@@ -11,3 +11,4 @@ export * from './authoritative-preflight';
 export * from './hummingbot-readiness';
 export * from './dex-readiness';
 export * from './rpc-dex-source';
+export * from './dex-runtime-registry';
