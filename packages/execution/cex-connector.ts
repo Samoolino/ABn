@@ -63,11 +63,11 @@ export function createCEXExecutionConnector(config: CEXConnectorConfig): Executi
     while (last.status === 'open' || last.status === 'pending' || last.status === 'partially_filled') {
       if (Date.now() - started >= config.maxUnhedgedMs) {
         await adapter.cancelOrder(created.id, input.symbol).catch(() => undefined);
-        const reconciled = await adapter.reconcile(created.id, input.symbol).catch(() => last);
+        await adapter.reconcile().catch(() => undefined);
         return {
           status: 'TIMEOUT',
-          filled: Number(reconciled.filled || 0),
-          average: reconciled.average,
+          filled: Number(last.filled || 0),
+          average: last.average,
           externalId: created.id,
         };
       }
@@ -75,11 +75,11 @@ export function createCEXExecutionConnector(config: CEXConnectorConfig): Executi
       last = await adapter.orderStatus(created.id, input.symbol);
     }
 
-    const reconciled = await adapter.reconcile(created.id, input.symbol).catch(() => last);
+    await adapter.reconcile().catch(() => undefined);
     return {
-      status: mapStatus(reconciled.status),
-      filled: Number(reconciled.filled || 0),
-      average: reconciled.average,
+      status: mapStatus(last.status),
+      filled: Number(last.filled || 0),
+      average: last.average,
       externalId: created.id,
     };
   };
