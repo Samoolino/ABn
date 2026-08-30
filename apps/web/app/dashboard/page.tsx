@@ -7,7 +7,21 @@ type Config = { id: string; kind: string; name: string; metadata: Record<string,
 type Runtime = { runtime: string; worker: string; hummingbot: string; signer: string; capital: unknown; opportunities: number; realizedPnl: unknown; lastHeartbeat: string | null };
 type DryRun = { ok: boolean; mode: string; liveOrderSubmissionAllowed: boolean; checks: Array<{ name: string; status: 'PASS' | 'FAIL' | 'NOT_CONFIGURED'; detail: string }>; nextGate: string };
 
-const venues = ['binance','kraken','okx','bybit','coinbase','kucoin','gate','mexc'];
+const venues = [
+  { id:'binance', label:'BINANCE', tier:'CORE' },
+  { id:'kraken', label:'KRAKEN', tier:'CORE' },
+  { id:'okx', label:'OKX', tier:'CORE' },
+  { id:'bybit', label:'BYBIT', tier:'CORE' },
+  { id:'coinbase', label:'COINBASE', tier:'CORE' },
+  { id:'kucoin', label:'KUCOIN', tier:'ONBOARDING' },
+  { id:'gate', label:'GATE', tier:'ONBOARDING' },
+  { id:'mexc', label:'MEXC', tier:'ONBOARDING' },
+  { id:'bitget', label:'BITGET', tier:'ONBOARDING' },
+  { id:'cryptocom', label:'CRYPTO.COM', tier:'ONBOARDING' },
+  { id:'gemini', label:'GEMINI', tier:'ONBOARDING' },
+  { id:'htx', label:'HTX', tier:'ONBOARDING' },
+  { id:'bitstamp', label:'BITSTAMP', tier:'ONBOARDING' },
+];
 
 export default function Dashboard() {
   const [configs, setConfigs] = useState<Config[]>([]);
@@ -42,7 +56,7 @@ export default function Dashboard() {
       await saveSecret('cex_api_secret', venue, apiSecret, { venue, credential: 'api_secret' });
       if (passphrase) await saveSecret('cex_passphrase', venue, passphrase, { venue, credential: 'passphrase' });
       setApiKey(''); setApiSecret(''); setPassphrase('');
-      setMessage(`${venue.toUpperCase()} credentials stored server-side. Values are never returned to the browser.`);
+      setMessage(`${selectedVenue.label} credentials stored server-side. Values are never returned to the browser. Venue onboarding does not by itself authorize LIVE execution.`);
       await load();
     } catch (error) { setMessage(error instanceof Error ? error.message : 'Credential save failed'); }
     finally { setBusy(false); }
@@ -69,6 +83,7 @@ export default function Dashboard() {
   }
 
   const configuredVenues = useMemo(() => new Set(configs.filter(c => c.kind.startsWith('cex_')).map(c => String(c.metadata?.venue ?? c.name))), [configs]);
+  const selectedVenue = venues.find(v => v.id === venue) ?? venues[0];
 
   return <main className="min-h-screen bg-[#070b12] text-slate-100">
     <div className="mx-auto max-w-7xl px-5 py-8">
@@ -88,7 +103,7 @@ export default function Dashboard() {
       <section className="mt-5 grid gap-5 lg:grid-cols-2">
         <Panel title="Protected exchange onboarding">
           <form onSubmit={saveExchange} className="grid gap-3">
-            <select value={venue} onChange={e => setVenue(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{venues.map(v => <option key={v} value={v}>{v.toUpperCase()}</option>)}</select>
+            <select value={venue} onChange={e => setVenue(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">{venues.map(v => <option key={v.id} value={v.id}>{v.label} · {v.tier}</option>)}</select>
             <input required type="password" autoComplete="new-password" placeholder="API key" value={apiKey} onChange={e => setApiKey(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" />
             <input required type="password" autoComplete="new-password" placeholder="API secret" value={apiSecret} onChange={e => setApiSecret(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" />
             <input type="password" autoComplete="new-password" placeholder="Passphrase (only if venue requires it)" value={passphrase} onChange={e => setPassphrase(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" />
@@ -101,7 +116,7 @@ export default function Dashboard() {
 
       <section className="mt-5 grid gap-5 lg:grid-cols-3">
         <Panel title="Venue readiness">
-          <div className="grid gap-2">{venues.map(v => <div key={v} className="flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2"><span>{v.toUpperCase()}</span><span className={configuredVenues.has(v) ? 'text-emerald-400' : 'text-slate-500'}>{configuredVenues.has(v) ? 'CREDENTIAL CONFIGURED' : 'NOT CONFIGURED'}</span></div>)}</div>
+          <div className="grid gap-2">{venues.map(v => <div key={v.id} className="flex items-center justify-between rounded-lg border border-slate-800 px-3 py-2"><span>{v.label} <small className="text-slate-500">· {v.tier}</small></span><span className={configuredVenues.has(v.id) ? 'text-emerald-400' : 'text-slate-500'}>{configuredVenues.has(v.id) ? 'CREDENTIAL CONFIGURED' : 'NOT CONFIGURED'}</span></div>)}</div>
         </Panel>
         <Panel title="Capital & inventory">
           <div className="space-y-3 text-sm"><Row label="Capital" value={runtime?.capital == null ? 'NOT VERIFIED' : JSON.stringify(runtime.capital)} /><Row label="Venue inventory" value="Validated during DRY_RUN by engine connectors" /><Row label="Sizing" value="Opportunity + capital + liquidity + risk + reserve" /><Row label="Fixed initiation amount" value="DISABLED" /></div>
