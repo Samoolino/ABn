@@ -132,4 +132,25 @@ describe('executePair partial-fill recovery', () => {
     expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
   });
 
+  it('recovers actual residual exposure when one initial placement rejects after the other leg fills', async () => {
+    const buy = adapter([{ status: 'closed', filled: 0.25 }]);
+    const sell = adapter([{ status: 'open', filled: 0 }]);
+    (sell.createOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('SELL_REJECTED_AFTER_BUY_ACCEPTED'));
+    const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
+    expect(result.status).toBe('HEDGE_OR_EXIT');
+    expect(result.recovery?.buyFilled).toBe(0.25);
+    expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
+    expect(buy.createOrder).toHaveBeenCalledTimes(2);
+  });
+
+  it('fails closed when timeout has no fills and reconciliation fails', async () => {
+    const buy = adapter([{ status: 'open', filled: 0 }], { createDelayMs: 10, reconcileFails: true });
+    const sell = adapter([{ status: 'open', filled: 0 }], { createDelayMs: 10 });
+    const result = await executePair(opportunity, input, connector(buy, sell), 1);
+    expect(result.status).toBe('TIMEOUT');
+    expect(result.recovery?.reconciled).toBe(false);
+    expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
+    expect(sell.cancelOrder).toHaveBeenCalledTimes(1);
+  });
+
 });
