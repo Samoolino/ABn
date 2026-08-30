@@ -39,15 +39,13 @@ async function hedgeFilledLeg(adapter:CEXAdapter,symbol:string,filled:number,sid
   }
 }
 
-async function reconcileOrders(connector:PairExecutionConnector,input:PairExecutionInput,orderIds:{buy?:string;sell?:string;buyHedge?:string;sellHedge?:string}):Promise<boolean>{
-  const jobs:Promise<unknown>[]=[];
-  if(orderIds.buy) jobs.push(connector.buy.reconcile(orderIds.buy,input.buy.symbol));
-  if(orderIds.sell) jobs.push(connector.sell.reconcile(orderIds.sell,input.sell.symbol));
-  if(orderIds.buyHedge) jobs.push(connector.buy.reconcile(orderIds.buyHedge,input.buy.symbol));
-  if(orderIds.sellHedge) jobs.push(connector.sell.reconcile(orderIds.sellHedge,input.sell.symbol));
-  if(jobs.length===0) return false;
-  const results=await Promise.allSettled(jobs);
-  return results.every(result=>result.status==='fulfilled');
+async function reconcileOrders(connector:PairExecutionConnector):Promise<boolean>{
+  try {
+    await Promise.all([connector.buy.reconcile(), connector.sell.reconcile()]);
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 export async function executePair(opportunity:Opportunity,input:PairExecutionInput,connector:PairExecutionConnector,timeoutMs:number):Promise<PairExecutionResult>{
@@ -76,8 +74,8 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   const sellFilled=sellStatus.status==='closed'||sellStatus.status==='filled';
 
   if(buyFilled&&sellFilled){
-    const reconciled=await reconcileOrders(connector,input,{buy:buyOrder.id,sell:sellOrder.id});
-    return {status:reconciled?'COMPLETED':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:buyStatus.filled,sellFilled:sellStatus.filled,reconciled}};
+    const reconciled=await reconcileOrders(connector);
+    return {status:reconciled?'COMPLETED':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number(buyStatus.filled||0),sellFilled:Number(sellStatus.filled||0),reconciled}};
   }
 
   await Promise.allSettled([
@@ -92,7 +90,7 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   const actualBuyFilled=Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0;
   const actualSellFilled=Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0;
   if(actualBuyFilled===0&&actualSellFilled===0){
-    const reconciled=await reconcileOrders(connector,input,{buy:buyOrder.id,sell:sellOrder.id});
+    const reconciled=await reconcileOrders(connector);
     return {status:'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
   }
 
@@ -101,10 +99,10 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     hedgeFilledLeg(connector.sell,input.sell.symbol,actualSellFilled,'buy'),
   ]);
   if(Date.now()-started>timeoutMs){
-    const reconciled=await reconcileOrders(connector,input,{buy:buyOrder.id,sell:sellOrder.id,buyHedge:buyHedge.orderId,sellHedge:sellHedge.orderId});
+    const reconciled=await reconcileOrders(connector);
     return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:actualBuyFilled,sellFilled:actualSellFilled,buyHedgeOrderId:buyHedge.orderId,sellHedgeOrderId:sellHedge.orderId,buyHedgeStatus:buyHedge.status,sellHedgeStatus:sellHedge.status,reconciled}};
   }
-  const reconciled=await reconcileOrders(connector,input,{buy:buyOrder.id,sell:sellOrder.id,buyHedge:buyHedge.orderId,sellHedge:sellHedge.orderId});
+  const reconciled=await reconcileOrders(connector);
   const recovery:PairExecutionRecovery={buyFilled:actualBuyFilled,sellFilled:actualSellFilled,buyHedgeOrderId:buyHedge.orderId,sellHedgeOrderId:sellHedge.orderId,buyHedgeStatus:buyHedge.status,sellHedgeStatus:sellHedge.status,reconciled};
   const recovered=buyHedge.ok&&sellHedge.ok&&reconciled;
   return {status:recovered?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
