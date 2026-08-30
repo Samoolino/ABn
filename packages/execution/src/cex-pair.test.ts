@@ -83,6 +83,18 @@ describe('executePair partial-fill recovery', () => {
     const result = await executePair(opportunity, input, connector(buy, sell), 1);
     expect(result.status).toBe('TIMEOUT');
   });
+  it('re-reads fills after initial placement timeout before reporting TIMEOUT', async () => {
+    const buy = adapter([{ status: 'closed', filled: 0.3 }], { createDelayMs: 10 });
+    const sell = adapter([{ status: 'closed', filled: 0 }], { createDelayMs: 10 });
+    const result = await executePair(opportunity, input, connector(buy, sell), 1);
+    expect(result.status).toBe('TIMEOUT');
+    expect(result.recovery?.buyFilled).toBe(0.3);
+    expect(result.recovery?.sellFilled).toBe(0);
+    expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
+    expect(sell.cancelOrder).toHaveBeenCalledTimes(1);
+    expect(buy.orderStatus).toHaveBeenCalledTimes(1);
+    expect(sell.orderStatus).toHaveBeenCalledTimes(1);
+  });
   it('cancels both opened legs when initial placement exceeds the timeout', async () => {
     const buy = adapter([{ status: 'open', filled: 0 }], { createDelayMs: 10 });
     const sell = adapter([{ status: 'open', filled: 0 }], { createDelayMs: 10 });
