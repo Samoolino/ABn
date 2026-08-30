@@ -63,7 +63,7 @@ describe('executePair partial-fill recovery', () => {
     expect(result.recovery?.sellFilled).toBe(0.6);
     expect(buy.createOrder).toHaveBeenCalledTimes(1);
     expect(sell.createOrder).toHaveBeenCalledTimes(2);
-    expect(sell.createOrder).toHaveBeenLastCalledWith({ symbol: 'ETH/USDC', side: 'buy', amount: 0.19999999999999996, type: 'market' });
+    expect(sell.createOrder).toHaveBeenLastCalledWith({ symbol: 'ETH/USDC', side: 'buy', amount: expect.closeTo(0.2, 10), type: 'market' });
   });
   it('fails when neither leg fills', async () => {
     const result = await executePair(opportunity, input, connector(adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }]), adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }])), 5_000);
