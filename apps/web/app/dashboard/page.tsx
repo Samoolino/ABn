@@ -1,6 +1,7 @@
 'use client';
 
 import { FormEvent, useEffect, useMemo, useState } from 'react';
+import { FundingIntegrationPanel } from './funding-integration-panel';
 
 type Config = { id: string; kind: string; name: string; metadata: Record<string, unknown>; updated_at?: string };
 type Runtime = { runtime: string; worker: string; hummingbot: string; signer: string; capital: unknown; opportunities: number; realizedPnl: unknown; lastHeartbeat: string | null };
@@ -96,13 +97,7 @@ export default function Dashboard() {
           </form>
         </Panel>
 
-        <Panel title="Funded capital authority">
-          <form onSubmit={saveSigner} className="grid gap-3">
-            <input required placeholder="Protected signer reference (Vault/HSM/provider URI or key ID)" value={signerRef} onChange={e => setSignerRef(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" />
-            <p className="text-sm text-slate-400">The engine verifies funded capital through a protected signer/provider. The raw private key is never stored in browser state or returned by an API.</p>
-            <button disabled={busy} className="rounded-lg border border-cyan-500 px-4 py-2 font-semibold text-cyan-300 disabled:opacity-50">Register signer reference</button>
-          </form>
-        </Panel>
+        <FundingIntegrationPanel saveSecret={saveSecret} onSaved={load} setMessage={setMessage} busy={busy} />
       </section>
 
       <section className="mt-5 grid gap-5 lg:grid-cols-3">
@@ -117,6 +112,10 @@ export default function Dashboard() {
           <p className="mt-3 text-xs text-slate-400">Preflight never authorizes live order submission. Live remains locked until explicit authorization after audit review.</p>
           {dryRun && <div className="mt-4 space-y-2">{dryRun.checks.map(c => <div key={c.name} className="rounded-lg border border-slate-800 p-2"><b className={c.status === 'PASS' ? 'text-emerald-400' : c.status === 'FAIL' ? 'text-red-400' : 'text-amber-300'}>{c.status}</b> <span className="ml-2">{c.name}</span><p className="mt-1 text-xs text-slate-400">{c.detail}</p></div>)}</div>}
         </Panel>
+      </section>
+
+      <section className="mt-5">
+        <FundingIntegrationPanel saveSecret={saveSecret} onSaved={load} setMessage={setMessage} busy={busy} />
       </section>
 
       <section className="mt-5 grid gap-5 lg:grid-cols-2">
