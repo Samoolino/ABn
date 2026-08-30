@@ -115,4 +115,21 @@ describe('executePair partial-fill recovery', () => {
   it('rejects expired opportunities', async () => {
     await expect(executePair({ ...opportunity, expiresAt: Date.now() - 1 }, input, connector(adapter([]), adapter([])), 5_000)).rejects.toThrow('PAIR_OPPORTUNITY_EXPIRED');
   });
+  it('classifies equal nonzero partial fills as completed after reconciliation', async () => {
+    const buy = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.5 }]);
+    const sell = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.5 }]);
+    const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
+    expect(result.status).toBe('COMPLETED');
+    expect(buy.createOrder).toHaveBeenCalledTimes(1);
+    expect(sell.createOrder).toHaveBeenCalledTimes(1);
+  });
+  it('fails closed when one initial placement rejects and no residual fills exist', async () => {
+    const buy = adapter([{ status: 'open', filled: 0 }]);
+    const sell = adapter([{ status: 'open', filled: 0 }]);
+    (sell.createOrder as ReturnType<typeof vi.fn>).mockRejectedValueOnce(new Error('SELL_REJECTED'));
+    const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
+    expect(result.status).toBe('FAILED');
+    expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
+  });
+
 });
