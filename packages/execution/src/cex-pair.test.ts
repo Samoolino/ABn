@@ -77,17 +77,17 @@ describe('executePair partial-fill recovery', () => {
     const result = await executePair(opportunity, input, connector(adapter([{ status: 'closed', filled: 1 }], { reconcileFails: true }), adapter([{ status: 'closed', filled: 1 }])), 5_000);
     expect(result.status).toBe('FAILED');
   });
-  it('returns TIMEOUT when the execution budget is exceeded', async () => {
+  it('completes when timeout occurs after both legs actually filled', async () => {
     const buy = adapter([{ status: 'closed', filled: 1 }], { statusDelayMs: 10 });
     const sell = adapter([{ status: 'closed', filled: 1 }], { statusDelayMs: 10 });
     const result = await executePair(opportunity, input, connector(buy, sell), 1);
-    expect(result.status).toBe('TIMEOUT');
+    expect(result.status).toBe('COMPLETED');
   });
-  it('re-reads fills after initial placement timeout before reporting TIMEOUT', async () => {
+  it('recovers residual exposure after initial placement timeout', async () => {
     const buy = adapter([{ status: 'closed', filled: 0.3 }], { createDelayMs: 10 });
     const sell = adapter([{ status: 'closed', filled: 0 }], { createDelayMs: 10 });
     const result = await executePair(opportunity, input, connector(buy, sell), 1);
-    expect(result.status).toBe('TIMEOUT');
+    expect(result.status).toBe('HEDGE_OR_EXIT');
     expect(result.recovery?.buyFilled).toBe(0.3);
     expect(result.recovery?.sellFilled).toBe(0);
     expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
