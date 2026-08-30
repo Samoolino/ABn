@@ -15,11 +15,15 @@ export interface PairExecutionInput {
   capital: { available: number; source: string; commitmentMs: number; repayable: boolean; repaymentAmount: number; collateralRequired: number; };
 }
 
-// HEDGE_OR_EXIT is retained as a compatibility status for the worker's
-// partial-fill/recovery state machine. executePair currently returns
-// COMPLETED | FAILED | TIMEOUT; future reconciliation/recovery paths may
-// legitimately surface HEDGE_OR_EXIT.
-export interface PairExecutionResult { status: 'COMPLETED' | 'FAILED' | 'TIMEOUT' | 'HEDGE_OR_EXIT'; buyOrderId?: string; sellOrderId?: string; }
+export interface PairExecutionResult {
+  status: 'COMPLETED' | 'FAILED' | 'TIMEOUT' | 'HEDGE_OR_EXIT';
+  buyOrderId?: string;
+  sellOrderId?: string;
+  hedgeOrderId?: string;
+  hedgeSide?: 'buy' | 'sell';
+  hedgeQuantity?: number;
+  reconciliation?: unknown;
+}
 
 const CEX_IDS = new Set<CEXId>(['mexc','gate','binance','kraken','okx','bybit','coinbase','kucoin','bitfinex','lbank']);
 const ENV_PREFIX: Record<CEXId, string> = {
@@ -47,6 +51,57 @@ export function createCEXPairExecutionConnector(buy: CEXAdapter, sell: CEXAdapte
   return { buy, sell };
 }
 
+async function hedgeResidual(
+  buyAdapter: CEXAdapter,
+  sellAdapter: CEXAdapter,
+  input: PairExecutionInput,
+  buyFilled: number,
+  sellFilled: number,
+): Promise<{ orderId: string; side: 'buy' | 'sell'; quantity: number; reconciliation: unknown }> {
+  const buyResidual = Math.max(0, buyFilled - sellFilled);
+  const sellResidual = Math.max(0, sellFilled - buyFilled);
+
+  if (buyResidual > 0) {
+    const order = await buyAdapter.createOrder({
+      symbol: input.buy.symbol,
+      side: 'sell',
+      quantity: buyResidual,
+      type: 'market',
+    });
+    const status = await buyAdapter.orderStatus(order.id, input.buy.symbol);
+    if (!(status.status === 'closed' || status.status === 'filled') || status.filled + Number.EPSILON < buyResidual) {
+      throw new Error(`PAIR_HEDGE_FAILED:sell:${buyResidual}`);
+    }
+    return {
+      orderId: order.id,
+      side: 'sell',
+      quantity: buyResidual,
+      reconciliation: await buyAdapter.reconcile(order.id, input.buy.symbol),
+    };
+  }
+
+  if (sellResidual > 0) {
+    const order = await sellAdapter.createOrder({
+      symbol: input.sell.symbol,
+      side: 'buy',
+      quantity: sellResidual,
+      type: 'market',
+    });
+    const status = await sellAdapter.orderStatus(order.id, input.sell.symbol);
+    if (!(status.status === 'closed' || status.status === 'filled') || status.filled + Number.EPSILON < sellResidual) {
+      throw new Error(`PAIR_HEDGE_FAILED:buy:${sellResidual}`);
+    }
+    return {
+      orderId: order.id,
+      side: 'buy',
+      quantity: sellResidual,
+      reconciliation: await sellAdapter.reconcile(order.id, input.sell.symbol),
+    };
+  }
+
+  throw new Error('PAIR_HEDGE_NO_RESIDUAL');
+}
+
 export async function executePair(
   opportunity: Opportunity,
   input: PairExecutionInput,
@@ -63,8 +118,8 @@ export async function executePair(
 
   const started = Date.now();
   const [buyOrder, sellOrder] = await Promise.all([
-    connector.buy.createOrder({ symbol: input.buy.symbol, side: 'buy', amount: input.buy.amount, type: input.buy.type }),
-    connector.sell.createOrder({ symbol: input.sell.symbol, side: 'sell', amount: input.sell.amount, type: input.sell.type }),
+    connector.buy.createOrder({ symbol: input.buy.symbol, side: 'buy', quantity: input.buy.amount, type: input.buy.type }),
+    connector.sell.createOrder({ symbol: input.sell.symbol, side: 'sell', quantity: input.sell.amount, type: input.sell.type }),
   ]);
 
   if (Date.now() - started > timeoutMs) return { status: 'TIMEOUT', buyOrderId: buyOrder.id, sellOrderId: sellOrder.id };
@@ -76,13 +131,46 @@ export async function executePair(
 
   const buyFilled = buyStatus.status === 'closed' || buyStatus.status === 'filled';
   const sellFilled = sellStatus.status === 'closed' || sellStatus.status === 'filled';
-  if (!buyFilled || !sellFilled) {
-    await Promise.allSettled([
-      buyFilled ? Promise.resolve() : connector.buy.cancelOrder(buyOrder.id, input.buy.symbol),
-      sellFilled ? Promise.resolve() : connector.sell.cancelOrder(sellOrder.id, input.sell.symbol),
-    ]);
+
+  if (buyFilled && sellFilled) {
+    return { status: 'COMPLETED', buyOrderId: buyOrder.id, sellOrderId: sellOrder.id };
+  }
+
+  await Promise.allSettled([
+    buyFilled ? Promise.resolve() : connector.buy.cancelOrder(buyOrder.id, input.buy.symbol),
+    sellFilled ? Promise.resolve() : connector.sell.cancelOrder(sellOrder.id, input.sell.symbol),
+  ]);
+
+  const buyFilledQuantity = Number.isFinite(buyStatus.filled) ? Math.max(0, buyStatus.filled) : 0;
+  const sellFilledQuantity = Number.isFinite(sellStatus.filled) ? Math.max(0, sellStatus.filled) : 0;
+
+  if (buyFilledQuantity === 0 && sellFilledQuantity === 0) {
     return { status: 'FAILED', buyOrderId: buyOrder.id, sellOrderId: sellOrder.id };
   }
 
-  return { status: 'COMPLETED', buyOrderId: buyOrder.id, sellOrderId: sellOrder.id };
+  try {
+    const hedge = await hedgeResidual(
+      connector.buy,
+      connector.sell,
+      input,
+      buyFilledQuantity,
+      sellFilledQuantity,
+    );
+
+    return {
+      status: 'HEDGE_OR_EXIT',
+      buyOrderId: buyOrder.id,
+      sellOrderId: sellOrder.id,
+      hedgeOrderId: hedge.orderId,
+      hedgeSide: hedge.side,
+      hedgeQuantity: hedge.quantity,
+      reconciliation: hedge.reconciliation,
+    };
+  } catch {
+    return {
+      status: 'HEDGE_OR_EXIT',
+      buyOrderId: buyOrder.id,
+      sellOrderId: sellOrder.id,
+    };
+  }
 }
