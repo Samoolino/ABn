@@ -17,13 +17,16 @@ const input: PairExecutionInput = {
   capital: { available: 1_000, source: 'FUNDED_INVENTORY', commitmentMs: 10_000, repayable: false, repaymentAmount: 0, collateralRequired: 0 },
 };
 
-function adapter(statuses: Array<{ status: string; filled: number }>, options?: { hedgeFails?: boolean; reconcileFails?: boolean }): CEXAdapter {
+function adapter(statuses: Array<{ status: string; filled: number }>, options?: { hedgeFails?: boolean; reconcileFails?: boolean; statusDelayMs?: number }): CEXAdapter {
   let orderNumber = 0; let statusIndex = 0;
   const createOrder = vi.fn(async () => {
     if (options?.hedgeFails && orderNumber > 0) throw new Error('HEDGE_FAILED');
     orderNumber += 1; return { id: `order-${orderNumber}`, status: 'open' };
   });
-  const orderStatus = vi.fn(async () => statuses[Math.min(statusIndex++, statuses.length - 1)] ?? { status: 'open', filled: 0 });
+  const orderStatus = vi.fn(async () => {
+    if (options?.statusDelayMs) await new Promise(resolve => setTimeout(resolve, options.statusDelayMs));
+    return statuses[Math.min(statusIndex++, statuses.length - 1)] ?? { status: 'open', filled: 0 };
+  });
   const cancelOrder = vi.fn(async () => undefined);
   const reconcile = vi.fn(async () => {
     if (options?.reconcileFails) throw new Error('RECONCILIATION_FAILED');
@@ -50,6 +53,16 @@ describe('executePair partial-fill recovery', () => {
     const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
     expect(result.status).toBe('HEDGE_OR_EXIT'); expect(result.recovery?.sellFilled).toBe(0.6); expect(sell.createOrder).toHaveBeenCalledTimes(2);
   });
+  it('hedges both partially filled legs using actual filled quantities', async () => {
+    const buy = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.4 }]);
+    const sell = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.6 }]);
+    const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
+    expect(result.status).toBe('HEDGE_OR_EXIT');
+    expect(result.recovery?.buyFilled).toBe(0.4);
+    expect(result.recovery?.sellFilled).toBe(0.6);
+    expect(buy.createOrder).toHaveBeenCalledTimes(2);
+    expect(sell.createOrder).toHaveBeenCalledTimes(2);
+  });
   it('fails when neither leg fills', async () => {
     const result = await executePair(opportunity, input, connector(adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }]), adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }])), 5_000);
     expect(result.status).toBe('FAILED');
@@ -61,6 +74,12 @@ describe('executePair partial-fill recovery', () => {
   it('fails when reconciliation fails', async () => {
     const result = await executePair(opportunity, input, connector(adapter([{ status: 'closed', filled: 1 }], { reconcileFails: true }), adapter([{ status: 'closed', filled: 1 }])), 5_000);
     expect(result.status).toBe('FAILED');
+  });
+  it('returns TIMEOUT when the execution budget is exceeded', async () => {
+    const buy = adapter([{ status: 'closed', filled: 1 }], { statusDelayMs: 10 });
+    const sell = adapter([{ status: 'closed', filled: 1 }], { statusDelayMs: 10 });
+    const result = await executePair(opportunity, input, connector(buy, sell), 1);
+    expect(result.status).toBe('TIMEOUT');
   });
   it('rejects non-funded capital', async () => {
     await expect(executePair(opportunity, { ...input, capital: { ...input.capital, source: 'CEX_ACCOUNT_BALANCES' } }, connector(adapter([]), adapter([])), 5_000)).rejects.toThrow('PAIR_CAPITAL_SOURCE_REJECTED');
