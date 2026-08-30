@@ -97,7 +97,6 @@ export default function Dashboard() {
           </form>
         </Panel>
 
-        <FundingIntegrationPanel saveSecret={saveSecret} onSaved={load} setMessage={setMessage} busy={busy} />
       </section>
 
       <section className="mt-5 grid gap-5 lg:grid-cols-3">
