@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
-import { auth } from '../../auth';
-import { listConfigs } from '../../lib/secure-config';
+import { auth } from '../../../auth';
+import { listConfigs } from '../../../lib/secure-config';
 
 export async function POST() {
   const session = await auth();
