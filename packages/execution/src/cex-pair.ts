@@ -64,13 +64,24 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     connector.buy.createOrder({symbol:input.buy.symbol,side:'buy',amount:input.buy.amount,type:input.buy.type}),
     connector.sell.createOrder({symbol:input.sell.symbol,side:'sell',amount:input.sell.amount,type:input.sell.type}),
   ]);
-  if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
+  if(Date.now()-started>timeoutMs){
+    await Promise.allSettled([
+      connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
+      connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
+    ]);
+    const reconciled=await reconcileOrders(connector);
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
+  }
 
   let [buyStatus,sellStatus]=await Promise.all([
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
   if(Date.now()-started>timeoutMs){
+    await Promise.allSettled([
+      connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
+      connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
+    ]);
     const reconciled=await reconcileOrders(connector);
     return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
   }
@@ -86,7 +97,10 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     buyFilled?Promise.resolve():connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
     sellFilled?Promise.resolve():connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
   ]);
-  if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
+  if(Date.now()-started>timeoutMs){
+    const reconciled=await reconcileOrders(connector);
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+  }
   [buyStatus,sellStatus]=await Promise.all([
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
