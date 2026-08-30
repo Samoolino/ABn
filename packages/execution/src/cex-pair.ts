@@ -48,6 +48,15 @@ async function reconcileOrders(connector:PairExecutionConnector):Promise<boolean
   }
 }
 
+async function readFilledAfterCancellation(adapter:CEXAdapter, orderId:string, symbol:string):Promise<number>{
+  try {
+    const status=await adapter.orderStatus(orderId,symbol);
+    return Number.isFinite(status.filled)?Math.max(0,status.filled):0;
+  } catch {
+    return 0;
+  }
+}
+
 export async function executePair(opportunity:Opportunity,input:PairExecutionInput,connector:PairExecutionConnector,timeoutMs:number):Promise<PairExecutionResult>{
   if(!Number.isFinite(opportunity.expectedNetProfit)||opportunity.expectedNetProfit<=0) throw new Error('PAIR_NET_PROFIT_GATE_REJECTED');
   if(!Number.isFinite(opportunity.capitalRequired)||opportunity.capitalRequired<=0) throw new Error('PAIR_CAPITAL_REQUIRED_INVALID');
@@ -69,8 +78,12 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
       connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
       connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
     ]);
+    const [buyFilled,sellFilled]=await Promise.all([
+      readFilledAfterCancellation(connector.buy,buyOrder.id,input.buy.symbol),
+      readFilledAfterCancellation(connector.sell,sellOrder.id,input.sell.symbol),
+    ]);
     const reconciled=await reconcileOrders(connector);
-    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled,sellFilled,reconciled}};
   }
 
   let [buyStatus,sellStatus]=await Promise.all([
@@ -82,8 +95,12 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
       connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
       connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
     ]);
+    const [buyFilled,sellFilled]=await Promise.all([
+      readFilledAfterCancellation(connector.buy,buyOrder.id,input.buy.symbol),
+      readFilledAfterCancellation(connector.sell,sellOrder.id,input.sell.symbol),
+    ]);
     const reconciled=await reconcileOrders(connector);
-    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled,sellFilled,reconciled}};
   }
   const buyFilled=buyStatus.status==='closed'||buyStatus.status==='filled';
   const sellFilled=sellStatus.status==='closed'||sellStatus.status==='filled';
@@ -98,16 +115,24 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     sellFilled?Promise.resolve():connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
   ]);
   if(Date.now()-started>timeoutMs){
+    const [buyFilledAfterCancel,sellFilledAfterCancel]=await Promise.all([
+      readFilledAfterCancellation(connector.buy,buyOrder.id,input.buy.symbol),
+      readFilledAfterCancellation(connector.sell,sellOrder.id,input.sell.symbol),
+    ]);
     const reconciled=await reconcileOrders(connector);
-    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:buyFilledAfterCancel,sellFilled:sellFilledAfterCancel,reconciled}};
   }
   [buyStatus,sellStatus]=await Promise.all([
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
   if(Date.now()-started>timeoutMs){
+    const [buyFilledAfterCancel,sellFilledAfterCancel]=await Promise.all([
+      readFilledAfterCancellation(connector.buy,buyOrder.id,input.buy.symbol),
+      readFilledAfterCancellation(connector.sell,sellOrder.id,input.sell.symbol),
+    ]);
     const reconciled=await reconcileOrders(connector);
-    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:buyFilledAfterCancel,sellFilled:sellFilledAfterCancel,reconciled}};
   }
   const actualBuyFilled=Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0;
   const actualSellFilled=Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0;
@@ -116,15 +141,12 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     return {status:'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
   }
 
-  // Net the two actual fills before hedging. A buy fill creates +base exposure;
-  // a sell fill creates -base exposure. Hedging both gross fills would reverse
-  // the net position when both legs partially fill.
   const netExposure=actualBuyFilled-actualSellFilled;
   const hedge = netExposure>0
     ? { side:'sell' as const, adapter:connector.buy, amount:netExposure, venue:'buy' as const }
     : { side:'buy' as const, adapter:connector.sell, amount:Math.abs(netExposure), venue:'sell' as const };
 
-  const hedgeResult=await hedgeFilledLeg(hedge.adapter, netExposure===0 ? input.buy.symbol : (hedge.venue==='buy' ? input.buy.symbol : input.sell.symbol), hedge.amount, hedge.side);
+  const hedgeResult=await hedgeFilledLeg(hedge.adapter, hedge.venue==='buy' ? input.buy.symbol : input.sell.symbol, hedge.amount, hedge.side);
   if(Date.now()-started>timeoutMs){
     const reconciled=await reconcileOrders(connector);
     return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:actualBuyFilled,sellFilled:actualSellFilled,...(hedge.venue==='buy'?{buyHedgeOrderId:hedgeResult.orderId,buyHedgeStatus:hedgeResult.status}:{sellHedgeOrderId:hedgeResult.orderId,sellHedgeStatus:hedgeResult.status}),reconciled}};
