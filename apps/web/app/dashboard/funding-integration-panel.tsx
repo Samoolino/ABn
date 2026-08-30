@@ -3,8 +3,11 @@
 import { FormEvent, useState } from 'react';
 
 const networks = [
-  ['Ethereum','eth'],['Arbitrum','arb'],['Base','base'],
-  ['Polygon','polygon'],['BNB Smart Chain','bsc']
+  ['Ethereum','eth','CORE'],['Arbitrum','arb','CORE'],['Base','base','CORE'],
+  ['Polygon','polygon','CORE'],['BNB Smart Chain','bsc','CORE'],
+  ['Optimism','optimism','ONBOARDING'],['Avalanche','avax','ONBOARDING'],
+  ['zkSync Era','zksync','ONBOARDING'],['Linea','linea','ONBOARDING'],
+  ['Scroll','scroll','ONBOARDING']
 ] as const;
 
 type Props = {
@@ -66,10 +69,10 @@ export function FundingIntegrationPanel({ saveSecret, onSaved, setMessage, busy 
 
     <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6">
       <h2 className="font-semibold">DEX RPC integration</h2>
-      <p className="mt-2 text-sm text-slate-400">RPC endpoints are used server-side for quotes, gas estimation, pool reads and execution verification. RPC URLs are not exposed as public client environment variables.</p>
+      <p className="mt-2 text-sm text-slate-400">RPC endpoints are used server-side for quotes, gas estimation, pool reads and execution verification. CORE networks are primary integration targets; ONBOARDING networks remain connector candidates until the live engine validates routing and execution support. RPC URLs are not exposed as public client environment variables.</p>
       <form onSubmit={saveRpc} className="mt-4 grid gap-3">
         <select value={rpcNetwork} onChange={e => setRpcNetwork(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2">
-          {networks.map(([name,id]) => <option key={id} value={id}>{name}</option>)}
+          {networks.map(([name,id,tier]) => <option key={id} value={id}>{name} · {tier}</option>)}
         </select>
         <input required type="url" placeholder="https://secure-rpc-provider.example" value={rpcUrl} onChange={e => setRpcUrl(e.target.value)} className="rounded-lg border border-slate-700 bg-slate-950 px-3 py-2" />
         <button disabled={busy} className="rounded-lg bg-violet-400 px-4 py-2 font-semibold text-slate-950 disabled:opacity-50">Store RPC endpoint</button>
