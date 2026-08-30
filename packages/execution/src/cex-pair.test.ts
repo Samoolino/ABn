@@ -54,15 +54,16 @@ describe('executePair partial-fill recovery', () => {
     const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
     expect(result.status).toBe('HEDGE_OR_EXIT'); expect(result.recovery?.sellFilled).toBe(0.6); expect(sell.createOrder).toHaveBeenCalledTimes(2);
   });
-  it('hedges both partially filled legs using actual filled quantities', async () => {
+  it('nets both partial fills and hedges only the residual exposure', async () => {
     const buy = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.4 }]);
     const sell = adapter([{ status: 'open', filled: 0 }, { status: 'closed', filled: 0.6 }]);
     const result = await executePair(opportunity, input, connector(buy, sell), 5_000);
     expect(result.status).toBe('HEDGE_OR_EXIT');
     expect(result.recovery?.buyFilled).toBe(0.4);
     expect(result.recovery?.sellFilled).toBe(0.6);
-    expect(buy.createOrder).toHaveBeenCalledTimes(2);
+    expect(buy.createOrder).toHaveBeenCalledTimes(1);
     expect(sell.createOrder).toHaveBeenCalledTimes(2);
+    expect(sell.createOrder).toHaveBeenLastCalledWith({ symbol: 'ETH/USDC', side: 'buy', amount: 0.19999999999999996, type: 'market' });
   });
   it('fails when neither leg fills', async () => {
     const result = await executePair(opportunity, input, connector(adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }]), adapter([{ status: 'open', filled: 0 }, { status: 'canceled', filled: 0 }])), 5_000);
