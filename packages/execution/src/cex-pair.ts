@@ -30,7 +30,7 @@ export function createCEXPairExecutionConnector(buy:CEXAdapter,sell:CEXAdapter):
 async function hedgeFilledLeg(adapter:CEXAdapter,symbol:string,filled:number,side:'buy'|'sell'):Promise<{orderId?:string;status?:string;ok:boolean}> {
   if(!Number.isFinite(filled)||filled<=0) return {ok:true};
   try {
-    const hedge=await adapter.createOrder({symbol,side,amount:filled,type:'market'});
+    const hedge=await adapter.createOrder({symbol,side,quantity:filled,type:'market'});
     const status=await adapter.orderStatus(hedge.id,symbol);
     const filledHedge=status.status==='closed'||status.status==='filled';
     return {orderId:hedge.id,status:status.status,ok:filledHedge&&Number.isFinite(status.filled)&&status.filled>=filled};
@@ -63,8 +63,8 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
 
   const started=Date.now();
   const [buyOrder,sellOrder]=await Promise.all([
-    connector.buy.createOrder({symbol:input.buy.symbol,side:'buy',amount:input.buy.amount,type:input.buy.type}),
-    connector.sell.createOrder({symbol:input.sell.symbol,side:'sell',amount:input.sell.amount,type:input.sell.type}),
+    connector.buy.createOrder({symbol:input.buy.symbol,side:'buy',quantity:input.buy.amount,type:input.buy.type}),
+    connector.sell.createOrder({symbol:input.sell.symbol,side:'sell',quantity:input.sell.amount,type:input.sell.type}),
   ]);
   if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
 
