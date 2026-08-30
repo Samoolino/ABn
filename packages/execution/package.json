@@ -1,1 +1,24 @@
-{"name":"@abn/execution","private":true,"version":"0.1.0","type":"module","main":"./src/index.ts","types":"./src/index.ts","dependencies":{"@abn/types":"workspace:*","@abn/venue-adapters":"workspace:*","@abn/cex-adapters":"workspace:*","ethers":"^6.13.4"}}
+{
+  "name": "@abn/execution",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "scripts": {
+    "build": "tsc",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@abn/types": "workspace:*",
+    "@abn/venue-adapters": "workspace:*",
+    "@abn/cex-adapters": "workspace:*",
+    "ethers": "^6.13.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.2.4"
+  }
+}
