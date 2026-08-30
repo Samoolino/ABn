@@ -42,7 +42,7 @@ export class DexGatewayClient {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), this.timeoutMs);
     try {
-      const response = await fetch(`${this.baseUrl.replace(/\\/$/, "")}${path}`, {
+      const response = await fetch(`${this.baseUrl.replace(/\/$/, "")}${path}`, {
         ...init,
         headers: { "content-type": "application/json", ...this.headers, ...(init.headers ?? {}) },
         signal: controller.signal,

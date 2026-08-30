@@ -1,6 +1,6 @@
 import type { Opportunity } from '@abn/types';
 import { CEXAdapter, CEXId } from '@abn/venue-adapters';
-import { executePair, type ExecutionConnector, type ExecutionPlan, type LegResult } from './index.ts';
+import { executePair, type ExecutionConnector, type ExecutionPlan, type LegResult } from './index.js';
 
 export interface CEXConnectorConfig {
   buyVenue: CEXId;
@@ -50,30 +50,36 @@ export function createCEXExecutionConnector(config: CEXConnectorConfig): Executi
     const input = sideInput(plan, side);
     if (!Number.isFinite(input.quantity) || input.quantity <= 0) throw new Error('INVALID_EXECUTION_AMOUNT');
 
-    const created = await adapter.createOrder(input);
+    const created = await adapter.createOrder({
+      symbol: input.symbol,
+      side: input.side,
+      type: input.type,
+      amount: input.quantity,
+      ...(input.price == null ? {} : { price: input.price }),
+    });
     const started = Date.now();
-    let last = await adapter.orderStatus(input.symbol, created.id);
+    let last = await adapter.orderStatus(created.id, input.symbol);
 
     while (last.status === 'open' || last.status === 'pending' || last.status === 'partially_filled') {
       if (Date.now() - started >= config.maxUnhedgedMs) {
-        await adapter.cancelOrder(input.symbol, created.id).catch(() => undefined);
-        const reconciled = await adapter.reconcile(input.symbol, created.id).catch(() => last);
+        await adapter.cancelOrder(created.id, input.symbol).catch(() => undefined);
+        await adapter.reconcile().catch(() => undefined);
         return {
           status: 'TIMEOUT',
-          filled: Number(reconciled.filled || 0),
-          average: reconciled.average,
+          filled: Number(last.filled || 0),
+          average: last.average,
           externalId: created.id,
         };
       }
       await new Promise((resolve) => setTimeout(resolve, 250));
-      last = await adapter.orderStatus(input.symbol, created.id);
+      last = await adapter.orderStatus(created.id, input.symbol);
     }
 
-    const reconciled = await adapter.reconcile(input.symbol, created.id).catch(() => last);
+    await adapter.reconcile().catch(() => undefined);
     return {
-      status: mapStatus(reconciled.status),
-      filled: Number(reconciled.filled || 0),
-      average: reconciled.average,
+      status: mapStatus(last.status),
+      filled: Number(last.filled || 0),
+      average: last.average,
       externalId: created.id,
     };
   };
