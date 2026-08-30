@@ -65,6 +65,13 @@ async function recoverExposure(
   return {buyFilled,sellFilled,buyHedgeOrderId,buyHedgeStatus,sellHedgeOrderId,sellHedgeStatus,reconciled:hedgeOk&&reconciled};
 }
 
+function terminalStatus(recovery: PairExecutionRecovery): PairExecutionResult['status'] {
+  if (!recovery.reconciled) return 'FAILED';
+  if (recovery.buyFilled <= 0 && recovery.sellFilled <= 0) return 'FAILED';
+  if (Math.abs(recovery.buyFilled - recovery.sellFilled) < 1e-12) return 'COMPLETED';
+  return 'HEDGE_OR_EXIT';
+}
+
 export async function executePair(opportunity:Opportunity,input:PairExecutionInput,connector:PairExecutionConnector,timeoutMs:number):Promise<PairExecutionResult>{
   if(!Number.isFinite(opportunity.expectedNetProfit)||opportunity.expectedNetProfit<=0) throw new Error('PAIR_NET_PROFIT_GATE_REJECTED');
   if(!Number.isFinite(opportunity.capitalRequired)||opportunity.capitalRequired<=0) throw new Error('PAIR_CAPITAL_REQUIRED_INVALID');
@@ -89,7 +96,7 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     const sellFilled=sellOrder?await cancelAndRead(connector.sell,sellOrder.id,input.sell.symbol):0;
     if(buyFilled||sellFilled){
       const recovery=await recoverExposure(connector,input,buyFilled,sellFilled);
-      return {status:recovery.reconciled?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder?.id,sellOrderId:sellOrder?.id,recovery};
+      return {status:terminalStatus(recovery),buyOrderId:buyOrder?.id,sellOrderId:sellOrder?.id,recovery};
     }
     const reconciled=await reconcileOrders(connector);
     return {status:'FAILED',buyOrderId:buyOrder?.id,sellOrderId:sellOrder?.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
@@ -103,7 +110,7 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     ]);
     if(buyFilled||sellFilled){
       const recovery=await recoverExposure(connector,input,buyFilled,sellFilled);
-      return {status:recovery.reconciled?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
+      return {status:terminalStatus(recovery),buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
     }
     const reconciled=await reconcileOrders(connector);
     return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
@@ -130,7 +137,7 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   if(timedOut()){
     if(actualBuyFilled||actualSellFilled){
       const recovery=await recoverExposure(connector,input,actualBuyFilled,actualSellFilled);
-      return {status:recovery.reconciled?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
+      return {status:terminalStatus(recovery),buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
     }
     const reconciled=await reconcileOrders(connector);
     return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
@@ -144,5 +151,5 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   const matchedExposure=Math.abs(actualBuyFilled-actualSellFilled)<1e-12;
   if(matchedExposure)
     return {status:recovery.reconciled?'COMPLETED':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
-  return {status:recovery.reconciled?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
+  return {status:terminalStatus(recovery),buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
 }
