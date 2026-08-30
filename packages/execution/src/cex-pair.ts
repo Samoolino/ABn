@@ -30,8 +30,8 @@ export function createCEXPairExecutionConnector(buy:CEXAdapter,sell:CEXAdapter):
 async function hedgeFilledLeg(adapter:CEXAdapter,symbol:string,filled:number,side:'buy'|'sell'):Promise<{orderId?:string;status?:string;ok:boolean}> {
   if(!Number.isFinite(filled)||filled<=0) return {ok:true};
   try {
-    const hedge=await adapter.createOrder({symbol,side,quantity:filled,type:'market'});
-    const status=await adapter.orderStatus(symbol,hedge.id);
+    const hedge=await adapter.createOrder({symbol,side,amount:filled,type:'market'});
+    const status=await adapter.orderStatus(hedge.id,symbol);
     const filledHedge=status.status==='closed'||status.status==='filled';
     return {orderId:hedge.id,status:status.status,ok:filledHedge&&Number.isFinite(status.filled)&&status.filled>=filled};
   } catch {
@@ -41,10 +41,10 @@ async function hedgeFilledLeg(adapter:CEXAdapter,symbol:string,filled:number,sid
 
 async function reconcileOrders(connector:PairExecutionConnector,input:PairExecutionInput,orderIds:{buy?:string;sell?:string;buyHedge?:string;sellHedge?:string}):Promise<boolean>{
   const jobs:Promise<unknown>[]=[];
-  if(orderIds.buy) jobs.push(connector.buy.reconcile(input.buy.symbol,orderIds.buy));
-  if(orderIds.sell) jobs.push(connector.sell.reconcile(input.sell.symbol,orderIds.sell));
-  if(orderIds.buyHedge) jobs.push(connector.buy.reconcile(input.buy.symbol,orderIds.buyHedge));
-  if(orderIds.sellHedge) jobs.push(connector.sell.reconcile(input.sell.symbol,orderIds.sellHedge));
+  if(orderIds.buy) jobs.push(connector.buy.reconcile(orderIds.buy,input.buy.symbol));
+  if(orderIds.sell) jobs.push(connector.sell.reconcile(orderIds.sell,input.sell.symbol));
+  if(orderIds.buyHedge) jobs.push(connector.buy.reconcile(orderIds.buyHedge,input.buy.symbol));
+  if(orderIds.sellHedge) jobs.push(connector.sell.reconcile(orderIds.sellHedge,input.sell.symbol));
   if(jobs.length===0) return false;
   const results=await Promise.allSettled(jobs);
   return results.every(result=>result.status==='fulfilled');
@@ -63,14 +63,14 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
 
   const started=Date.now();
   const [buyOrder,sellOrder]=await Promise.all([
-    connector.buy.createOrder({symbol:input.buy.symbol,side:'buy',quantity:input.buy.amount,type:input.buy.type}),
-    connector.sell.createOrder({symbol:input.sell.symbol,side:'sell',quantity:input.sell.amount,type:input.sell.type}),
+    connector.buy.createOrder({symbol:input.buy.symbol,side:'buy',amount:input.buy.amount,type:input.buy.type}),
+    connector.sell.createOrder({symbol:input.sell.symbol,side:'sell',amount:input.sell.amount,type:input.sell.type}),
   ]);
   if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
 
   let [buyStatus,sellStatus]=await Promise.all([
-    connector.buy.orderStatus(input.buy.symbol,buyOrder.id),
-    connector.sell.orderStatus(input.sell.symbol,sellOrder.id),
+    connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
+    connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
   const buyFilled=buyStatus.status==='closed'||buyStatus.status==='filled';
   const sellFilled=sellStatus.status==='closed'||sellStatus.status==='filled';
@@ -81,13 +81,13 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   }
 
   await Promise.allSettled([
-    buyFilled?Promise.resolve():connector.buy.cancelOrder(input.buy.symbol,buyOrder.id),
-    sellFilled?Promise.resolve():connector.sell.cancelOrder(input.sell.symbol,sellOrder.id),
+    buyFilled?Promise.resolve():connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
+    sellFilled?Promise.resolve():connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
   ]);
   if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
   [buyStatus,sellStatus]=await Promise.all([
-    connector.buy.orderStatus(input.buy.symbol,buyOrder.id),
-    connector.sell.orderStatus(input.sell.symbol,sellOrder.id),
+    connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
+    connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
   const actualBuyFilled=Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0;
   const actualSellFilled=Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0;
