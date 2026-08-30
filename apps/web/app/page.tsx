@@ -21,52 +21,92 @@ const initial: Status = {
 
 export default function Home() {
   const [status, setStatus] = useState<Status>(initial);
-  const [busy, setBusy] = useState(false);
 
   async function refresh() {
     try {
       const response = await fetch('/api/status', { cache: 'no-store' });
       if (response.ok) setStatus(await response.json());
-    } catch { /* keep last known state */ }
+    } catch { /* public landing remains available without engine connectivity */ }
   }
 
-  async function control(action: 'arm' | 'disarm' | 'emergency-stop') {
-    setBusy(true);
-    try { await fetch(`/api/${action}`, { method: 'POST' }); } finally { setBusy(false); refresh(); }
-  }
+  useEffect(() => {
+    void refresh();
+    const id = setInterval(() => void refresh(), 5000);
+    return () => clearInterval(id);
+  }, []);
 
-  useEffect(() => { refresh(); const id = setInterval(refresh, 5000); return () => clearInterval(id); }, []);
+  const engineReady = status.runtime !== 'STOPPED' && status.worker !== 'NOT_CONFIGURED';
 
   return (
-    <main className="min-h-screen bg-[#070b12] text-slate-100">
-      <div className="mx-auto max-w-7xl px-5 py-8">
-        <header className="flex flex-col gap-5 border-b border-slate-800 pb-6 md:flex-row md:items-center md:justify-between">
-          <div><p className="text-xs font-semibold tracking-[0.25em] text-cyan-400">ABn · ARBITRAGE OPERATIONS</p><h1 className="mt-2 text-3xl font-semibold">Live Trading Control Center</h1><p className="mt-2 text-sm text-slate-400">Hummingbot market/execution services + persistent ABn worker + protected signer.</p></div>
-          <div className="flex gap-2"><button disabled={busy} onClick={() => control('arm')} className="rounded-lg bg-emerald-500 px-4 py-2 text-sm font-semibold text-slate-950 disabled:opacity-50">ARM</button><button disabled={busy} onClick={() => control('disarm')} className="rounded-lg border border-slate-700 px-4 py-2 text-sm">DISARM</button><button disabled={busy} onClick={() => control('emergency-stop')} className="rounded-lg bg-red-600 px-4 py-2 text-sm font-semibold">STOP</button></div>
-        </header>
+    <main className="min-h-screen bg-[#060912] text-slate-100">
+      <div className="mx-auto max-w-7xl px-5 py-6 sm:px-8">
+        <nav className="flex items-center justify-between">
+          <div className="flex items-center gap-3">
+            <div className="grid h-10 w-10 place-items-center rounded-xl bg-gradient-to-br from-cyan-400 to-violet-500 font-bold text-slate-950">A</div>
+            <div><div className="font-semibold">ABn Engine</div><div className="text-xs text-slate-500">Arbitrage operations infrastructure</div></div>
+          </div>
+          <div className="flex items-center gap-3">
+            <a href="#architecture" className="hidden text-sm text-slate-400 hover:text-white sm:block">Architecture</a>
+            <a href="/auth" className="rounded-lg bg-white px-4 py-2 text-sm font-semibold text-slate-950">Sign in</a>
+          </div>
+        </nav>
 
-        <section className="grid gap-4 py-7 sm:grid-cols-2 lg:grid-cols-4">
-          {[
-            ['Runtime', status.runtime], ['Worker', status.worker], ['Hummingbot', status.hummingbot], ['Signer', status.signer],
-          ].map(([label, value]) => <div key={label} className="rounded-xl border border-slate-800 bg-slate-900/60 p-5"><p className="text-xs uppercase tracking-wider text-slate-500">{label}</p><p className="mt-3 text-lg font-semibold">{value}</p></div>)}
+        <section className="grid items-center gap-12 py-20 lg:grid-cols-[1.15fr_.85fr]">
+          <div>
+            <p className="text-xs font-semibold tracking-[0.28em] text-cyan-400">OPPORTUNITY-DRIVEN EXECUTION</p>
+            <h1 className="mt-5 max-w-4xl text-5xl font-semibold tracking-tight sm:text-6xl">A controlled arbitrage engine built around verified capital, execution safety and reconciliation.</h1>
+            <p className="mt-6 max-w-2xl text-lg leading-8 text-slate-400">ABn does not initiate trades from a fixed amount. The engine evaluates profitable opportunities and derives executable size from verified available capital, venue liquidity, fees, slippage, risk limits and a safety reserve.</p>
+            <div className="mt-8 flex flex-wrap gap-3">
+              <a href="/auth" className="rounded-xl bg-cyan-400 px-5 py-3 font-semibold text-slate-950">Open secure workspace</a>
+              <a href="#architecture" className="rounded-xl border border-slate-700 px-5 py-3 font-semibold">View architecture</a>
+            </div>
+            <p className="mt-5 text-xs text-amber-300">LIVE execution is not enabled from this public page. Engine controls require authenticated access and cannot bypass worker risk gates.</p>
+          </div>
+
+          <div className="rounded-2xl border border-slate-800 bg-slate-900/70 p-6 shadow-2xl shadow-cyan-950/20">
+            <div className="flex items-center justify-between"><span className="text-sm text-slate-400">Engine telemetry</span><span className={engineReady ? 'rounded-full bg-emerald-500/15 px-3 py-1 text-xs text-emerald-300' : 'rounded-full bg-slate-800 px-3 py-1 text-xs text-slate-400'}>{engineReady ? 'ONLINE' : 'STANDBY'}</span></div>
+            <div className="mt-6 grid gap-3 sm:grid-cols-2">
+              <Metric title="Runtime" value={status.runtime} />
+              <Metric title="Worker" value={status.worker} />
+              <Metric title="Opportunities" value={String(status.opportunities)} />
+              <Metric title="Capital" value={status.capital == null ? 'NOT VERIFIED' : '$' + status.capital.toFixed(2)} />
+            </div>
+            <div className="mt-5 rounded-xl border border-slate-800 bg-[#060912] p-4 text-xs text-slate-400">
+              <div className="flex justify-between"><span>Signer</span><span>{status.signer}</span></div>
+              <div className="mt-3 flex justify-between"><span>Heartbeat</span><span>{status.lastHeartbeat ?? 'NOT VERIFIED'}</span></div>
+            </div>
+          </div>
         </section>
 
-        <section className="grid gap-4 lg:grid-cols-3">
-          <Metric title="Verified capital" value={status.capital == null ? 'NOT_VERIFIED' : `$${status.capital.toFixed(2)}`} />
-          <Metric title="Qualified opportunities" value={String(status.opportunities)} />
-          <Metric title="Realized PnL" value={status.realizedPnl == null ? 'NOT_VERIFIED' : `$${status.realizedPnl.toFixed(4)}`} />
+        <section id="architecture" className="border-y border-slate-800 py-16">
+          <div className="max-w-2xl"><p className="text-xs font-semibold tracking-[0.25em] text-violet-300">EXECUTION ARCHITECTURE</p><h2 className="mt-4 text-3xl font-semibold">From verified capital to reconciled execution.</h2></div>
+          <div className="mt-10 grid gap-4 md:grid-cols-5">
+            {[
+              ['01','Market intelligence','Live data and opportunity qualification.'],
+              ['02','Capital authority','Protected signer, funded wallet authority, or approved external funding provider.'],
+              ['03','Risk sizing','Capital, liquidity, fees, slippage and reserve determine size.'],
+              ['04','Execution','CEX and DEX connectors submit controlled orders.'],
+              ['05','Reconciliation','Fills, residual exposure, hedge/exit and realized PnL are reconciled.'],
+            ].map(([n,title,copy]) => <article key={n} className="rounded-xl border border-slate-800 bg-slate-900/50 p-5"><span className="text-xs text-cyan-400">{n}</span><h3 className="mt-3 font-semibold">{title}</h3><p className="mt-2 text-sm leading-6 text-slate-400">{copy}</p></article>)}
+          </div>
         </section>
 
-        <section className="mt-5 grid gap-5 lg:grid-cols-2">
-          <Panel title="Execution pipeline"><Pipeline /></Panel>
-          <Panel title="Safety gate"><p className="text-sm leading-6 text-slate-300">No trade is initiated from a fixed dollar amount. The engine sizes from verified funded capital and only executes when modeled net profit exceeds fees, gas, slippage, settlement costs and the safety reserve.</p><p className="mt-4 text-xs text-amber-300">A dashboard control cannot bypass the worker risk gate or protected signer.</p></Panel>
+        <section className="grid gap-6 py-16 lg:grid-cols-3">
+          <Card title="Capital source flexibility" text="Select protected signer authority, approved funded-wallet authority, or an external provider API. Secrets remain server-side and encrypted; production should prefer non-exportable signer references." />
+          <Card title="CEX + DEX connectivity" text="Connect approved exchange credentials and server-side RPC endpoints for supported networks without exposing credentials in the client bundle." />
+          <Card title="Fail-closed operations" text="No profitable opportunity, insufficient capital, missing reconciliation, residual exposure failure or recovery failure prevents progression to funded LIVE execution." />
         </section>
-        <p className="mt-6 text-xs text-slate-500">Heartbeat: {status.lastHeartbeat ?? 'NOT_VERIFIED'} · Dashboard refresh: 5s</p>
+
+        <footer className="border-t border-slate-800 py-8 text-xs text-slate-500">ABn Engine · Authenticated operations workspace required for configuration and controls.</footer>
       </div>
     </main>
   );
 }
 
-function Metric({ title, value }: { title:string; value:string }) { return <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5"><p className="text-xs uppercase tracking-wider text-slate-500">{title}</p><p className="mt-3 text-2xl font-semibold">{value}</p></div>; }
-function Panel({ title, children }: { title:string; children:React.ReactNode }) { return <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-6"><h2 className="font-semibold">{title}</h2><div className="mt-4">{children}</div></div>; }
-function Pipeline() { return <div className="grid gap-2 text-sm">{['Live market data','Opportunity validation','Capital + risk gate','Hummingbot / venue execution','Reconciliation + realized PnL'].map((x, i) => <div key={x} className="flex items-center gap-3 rounded-lg border border-slate-800 px-4 py-3"><span className="flex h-6 w-6 items-center justify-center rounded-full bg-slate-800 text-xs">{i + 1}</span>{x}</div>)}</div>; }
+function Metric({ title, value }: { title: string; value: string }) {
+  return <div className="rounded-xl border border-slate-800 bg-[#090d17] p-4"><p className="text-xs uppercase tracking-wider text-slate-500">{title}</p><p className="mt-2 text-sm font-semibold">{value}</p></div>;
+}
+
+function Card({ title, text }: { title: string; text: string }) {
+  return <article className="rounded-2xl border border-slate-800 bg-slate-900/50 p-6"><h3 className="font-semibold">{title}</h3><p className="mt-3 text-sm leading-7 text-slate-400">{text}</p></article>;
+}
