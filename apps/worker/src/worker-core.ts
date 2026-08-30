@@ -32,6 +32,9 @@ function signerReady() { return signerRefConfigured(); }
 function isCexVenue(venue: string) {
   return ['mexc','gate','binance','kraken','okx','bybit','coinbase','kucoin','bitfinex','lbank'].includes(venue.toLowerCase());
 }
+function isCexPair(opportunity: Opportunity) {
+  return isCexVenue(opportunity.buyVenue) && isCexVenue(opportunity.sellVenue);
+}
 
 function splitSymbol(symbol: string): { base: string; quote: string } {
   const normalized = symbol.trim().toUpperCase().replace('-', '/');
@@ -201,7 +204,17 @@ async function refreshControlAndOpportunity() {
     return;
   }
 
-  if (!isCexVenue(opportunity.buyVenue) || !isCexVenue(opportunity.sellVenue)) {
+  if (isCexPair(opportunity) && requiredCapitalSource === 'FUNDED_INVENTORY') {
+    mode = 'ARMED';
+    await db.query(`insert into opportunity_events(opportunity_id,event,details) values($1,'FUNDED_CEX_BRIDGE_REJECTED',$2::jsonb)`, [
+      opportunity.id,
+      JSON.stringify({reason:'CEX_FUNDED_WALLET_BRIDGE_NOT_IMPLEMENTED',signerAddress:signerVerification.address,signerNetwork,capitalAsset}),
+    ]);
+    console.error(JSON.stringify({event:'live_blocked',reason:'CEX_FUNDED_WALLET_BRIDGE_NOT_IMPLEMENTED',opportunityId:opportunity.id}));
+    return;
+  }
+
+  if (!isCexPair(opportunity)) {
     const correlationId = crypto.randomUUID();
     const validation = validateCoordinatedOpportunity(opportunity, {
       correlationId,
