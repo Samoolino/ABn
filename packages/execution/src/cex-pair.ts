@@ -28,10 +28,14 @@ export function createCEXPairExecutionConnector(buy:CEXAdapter,sell:CEXAdapter):
 
 async function hedgeFilledLeg(adapter:CEXAdapter,symbol:string,filled:number,side:'buy'|'sell'):Promise<{orderId?:string;status?:string;ok:boolean}> {
   if(!Number.isFinite(filled)||filled<=0) return {ok:true};
-  const hedge=await adapter.createOrder({symbol,side,amount:filled,type:'market'});
-  const status=await adapter.orderStatus(hedge.id,symbol);
-  const filledHedge=status.status==='closed'||status.status==='filled';
-  return {orderId:hedge.id,status:status.status,ok:filledHedge&&Number.isFinite(status.filled)&&status.filled>=filled};
+  try {
+    const hedge=await adapter.createOrder({symbol,side,amount:filled,type:'market'});
+    const status=await adapter.orderStatus(hedge.id,symbol);
+    const filledHedge=status.status==='closed'||status.status==='filled';
+    return {orderId:hedge.id,status:status.status,ok:filledHedge&&Number.isFinite(status.filled)&&status.filled>=filled};
+  } catch {
+    return {ok:false};
+  }
 }
 
 export async function executePair(opportunity:Opportunity,input:PairExecutionInput,connector:PairExecutionConnector,timeoutMs:number):Promise<PairExecutionResult>{
@@ -60,27 +64,36 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
   const sellFilled=sellStatus.status==='closed'||sellStatus.status==='filled';
 
   if(buyFilled&&sellFilled){
-    await Promise.allSettled([connector.buy.reconcile(),connector.sell.reconcile()]);
-    return {status:'COMPLETED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
+    const reconciled=await Promise.allSettled([connector.buy.reconcile(),connector.sell.reconcile()]).then(results=>results.every(result=>result.status==='fulfilled'));
+    return {status:reconciled?'COMPLETED':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:buyStatus.filled,sellFilled:sellStatus.filled,reconciled}};
   }
 
   await Promise.allSettled([
     buyFilled?Promise.resolve():connector.buy.cancelOrder(buyOrder.id,input.buy.symbol),
     sellFilled?Promise.resolve():connector.sell.cancelOrder(sellOrder.id,input.sell.symbol),
   ]);
+  if(Date.now()-started>timeoutMs) return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id};
   [buyStatus,sellStatus]=await Promise.all([
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
   const actualBuyFilled=Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0;
   const actualSellFilled=Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0;
+  if(actualBuyFilled===0&&actualSellFilled===0){
+    const reconciled=await Promise.allSettled([connector.buy.reconcile(),connector.sell.reconcile()]).then(results=>results.every(result=>result.status==='fulfilled'));
+    return {status:reconciled?'FAILED':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:0,sellFilled:0,reconciled}};
+  }
 
   const [buyHedge,sellHedge]=await Promise.all([
     hedgeFilledLeg(connector.buy,input.buy.symbol,actualBuyFilled,'sell'),
     hedgeFilledLeg(connector.sell,input.sell.symbol,actualSellFilled,'buy'),
   ]);
+  if(Date.now()-started>timeoutMs){
+    const reconciled=await Promise.allSettled([connector.buy.reconcile(),connector.sell.reconcile()]).then(results=>results.every(result=>result.status==='fulfilled'));
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:actualBuyFilled,sellFilled:actualSellFilled,buyHedgeOrderId:buyHedge.orderId,sellHedgeOrderId:sellHedge.orderId,buyHedgeStatus:buyHedge.status,sellHedgeStatus:sellHedge.status,reconciled}};
+  }
   const reconciled=await Promise.allSettled([connector.buy.reconcile(),connector.sell.reconcile()]).then(results=>results.every(result=>result.status==='fulfilled'));
   const recovery:PairExecutionRecovery={buyFilled:actualBuyFilled,sellFilled:actualSellFilled,buyHedgeOrderId:buyHedge.orderId,sellHedgeOrderId:sellHedge.orderId,buyHedgeStatus:buyHedge.status,sellHedgeStatus:sellHedge.status,reconciled};
-  const recovered=(actualBuyFilled>0||actualSellFilled>0)&&buyHedge.ok&&sellHedge.ok&&reconciled;
+  const recovered=buyHedge.ok&&sellHedge.ok&&reconciled;
   return {status:recovered?'HEDGE_OR_EXIT':'FAILED',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery};
 }
