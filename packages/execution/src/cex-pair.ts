@@ -70,6 +70,10 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
+  if(Date.now()-started>timeoutMs){
+    const reconciled=await reconcileOrders(connector);
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+  }
   const buyFilled=buyStatus.status==='closed'||buyStatus.status==='filled';
   const sellFilled=sellStatus.status==='closed'||sellStatus.status==='filled';
 
@@ -87,6 +91,10 @@ export async function executePair(opportunity:Opportunity,input:PairExecutionInp
     connector.buy.orderStatus(buyOrder.id,input.buy.symbol),
     connector.sell.orderStatus(sellOrder.id,input.sell.symbol),
   ]);
+  if(Date.now()-started>timeoutMs){
+    const reconciled=await reconcileOrders(connector);
+    return {status:'TIMEOUT',buyOrderId:buyOrder.id,sellOrderId:sellOrder.id,recovery:{buyFilled:Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0,sellFilled:Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0,reconciled}};
+  }
   const actualBuyFilled=Number.isFinite(buyStatus.filled)?Math.max(0,buyStatus.filled):0;
   const actualSellFilled=Number.isFinite(sellStatus.filled)?Math.max(0,sellStatus.filled):0;
   if(actualBuyFilled===0&&actualSellFilled===0){
