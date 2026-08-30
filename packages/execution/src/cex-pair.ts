@@ -15,7 +15,11 @@ export interface PairExecutionInput {
   capital: { available: number; source: string; commitmentMs: number; repayable: boolean; repaymentAmount: number; collateralRequired: number; };
 }
 
-export interface PairExecutionResult { status: 'COMPLETED' | 'FAILED' | 'TIMEOUT'; buyOrderId?: string; sellOrderId?: string; }
+// HEDGE_OR_EXIT is retained as a compatibility status for the worker's
+// partial-fill/recovery state machine. executePair currently returns
+// COMPLETED | FAILED | TIMEOUT; future reconciliation/recovery paths may
+// legitimately surface HEDGE_OR_EXIT.
+export interface PairExecutionResult { status: 'COMPLETED' | 'FAILED' | 'TIMEOUT' | 'HEDGE_OR_EXIT'; buyOrderId?: string; sellOrderId?: string; }
 
 const CEX_IDS = new Set<CEXId>(['mexc','gate','binance','kraken','okx','bybit','coinbase','kucoin','bitfinex','lbank']);
 const ENV_PREFIX: Record<CEXId, string> = {
