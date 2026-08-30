@@ -92,8 +92,8 @@ describe('executePair partial-fill recovery', () => {
     expect(result.recovery?.sellFilled).toBe(0);
     expect(buy.cancelOrder).toHaveBeenCalledTimes(1);
     expect(sell.cancelOrder).toHaveBeenCalledTimes(1);
-    expect(buy.orderStatus).toHaveBeenCalledTimes(1);
-    expect(sell.orderStatus).toHaveBeenCalledTimes(1);
+    expect(buy.orderStatus).toHaveBeenCalledTimes(2);
+    expect(sell.orderStatus).toHaveBeenCalledTimes(2);
   });
   it('cancels both opened legs when initial placement exceeds the timeout', async () => {
     const buy = adapter([{ status: 'open', filled: 0 }], { createDelayMs: 10 });
