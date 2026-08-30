@@ -9,8 +9,7 @@
     "resolveJsonModule": true,
     "declaration": true,
     "outDir": "dist",
-    "rootDir": ".",
-    "types": ["node"]
+    "types": ["node", "vitest/globals"]
   },
   "include": ["*.ts", "src/**/*.ts"],
   "exclude": ["dist", "node_modules"]
